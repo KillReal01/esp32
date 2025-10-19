@@ -1,0 +1,2 @@
+source /home/kirill/dev/esp32/web_server/build/bootloader/gdbinit/symbols
+source /home/kirill/dev/esp32/web_server/build/bootloader/gdbinit/connect
