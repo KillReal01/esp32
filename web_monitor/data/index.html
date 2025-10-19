@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ESP32 Web Monitor — UI</title>
+  <style>
+    :root{--bg:#0f1724;--card:#111827;--accent:#3b82f6;--muted:#94a3b8;--glass:rgba(255,255,255,0.03)}
+    html,body{height:100%;margin:0;font-family:Inter,Segoe UI,Roboto,Helvetica,Arial; background:linear-gradient(180deg,#071025 0%, #071831 100%);color:#e6edf3}
+    .wrap{max-width:980px;margin:28px auto;padding:20px}
+    header{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+    .brand{font-weight:700;font-size:20px}
+    nav{margin-top:18px;display:flex;flex-wrap:wrap;gap:8px}
+    nav button.tab{background:transparent;border:1px solid rgba(255,255,255,0.04);padding:10px 14px;border-radius:8px;color:var(--muted);cursor:pointer}
+    nav button.tab.active{background:linear-gradient(90deg, rgba(59,130,246,0.12), rgba(59,130,246,0.06));color:#dff0ff;border-color:rgba(59,130,246,0.5)}
+    .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));padding:16px;border-radius:12px;margin-top:14px;border:1px solid rgba(255,255,255,0.03)}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{padding:8px 10px;text-align:left;border-bottom:1px dashed rgba(255,255,255,0.02);color:#d9e6f2}
+    th{color:var(--muted);font-weight:600;font-size:12px}
+    .muted{color:var(--muted);font-size:13px}
+    .controls{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+    .small{padding:6px 8px;font-size:13px;border-radius:8px}
+    .status{display:inline-block;padding:4px 8px;border-radius:999px;font-size:12px;background:rgba(255,255,255,0.02)}
+    .grid{display:grid;grid-template-columns:1fr 320px;gap:12px}
+    @media(max-width:768px){.grid{grid-template-columns:1fr}} 
+    .right-col .card{height:auto;overflow:auto}
+    .logs-pre{white-space:pre-wrap;max-height:360px;overflow:auto;background:rgba(0,0,0,0.12);padding:12px;border-radius:8px}
+    footer{margin-top:18px;color:var(--muted);font-size:13px;text-align:center}
+    .empty{color:var(--muted);padding:18px;text-align:center}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand">ESP32 Web Monitor</div>
+      <div class="muted">AP: <span class="status">ESP32-MONITOR (192.168.4.1)</span></div>
+    </header>
+
+    <nav>
+      <button class="tab active" data-tab="scan">Wi‑Fi Scan</button>
+      <button class="tab" data-tab="clients">Connected Clients</button>
+      <button class="tab" data-tab="logs">Logs</button>
+      <button class="tab" data-tab="system">System</button>
+      <button class="tab" data-tab="help">Инструкция</button>
+    </nav>
+
+    <div class="grid" style="margin-top:12px">
+      <div class="left-col">
+
+        <div id="scan" class="card panel">
+          <div class="controls">
+            <button id="scanBtn" class="small">Scan now</button>
+            <div class="muted">Последнее сканирование: <span id="lastScan">—</span></div>
+          </div>
+          <table id="scanTable"><thead><tr><th>SSID</th><th>RSSI</th><th>Channel</th></tr></thead><tbody></tbody></table>
+        </div>
+
+        <div id="clients" class="card panel" style="display:none">
+          <div class="controls">
+            <div class="muted">Подключено: <span id="clientsCount">0</span></div>
+            <button id="refreshClients" class="small">Обновить</button>
+          </div>
+          <table id="clientsTable"><thead><tr><th>MAC</th><th>IP</th><th>Last seen</th></tr></thead><tbody></tbody></table>
+        </div>
+
+        <div id="logs" class="card panel" style="display:none">
+          <div class="controls">
+            <button id="loadLogs" class="small">Загрузить</button>
+            <button id="downloadLogs" class="small">Скачать</button>
+            <div class="muted">Размер логов: <span id="logsSize">—</span></div>
+          </div>
+          <div class="logs-pre" id="logsContent">Логи не загружены.</div>
+        </div>
+
+        <div id="system" class="card panel" style="display:none">
+          <div class="controls">
+            <button id="rebootBtn" class="small">Перезагрузить</button>
+            <button id="refreshSys" class="small">Обновить</button>
+          </div>
+          <table><tbody>
+            <tr><th>Firmware</th><td id="fwVer">—</td></tr>
+            <tr><th>Uptime</th><td id="uptime">—</td></tr>
+            <tr><th>Free Heap</th><td id="freeHeap">—</td></tr>
+            <tr><th>Flash</th><td id="flashInfo">—</td></tr>
+          </tbody></table>
+        </div>
+
+        <div id="help" class="card panel" style="display:none">
+          <div class="muted">Инструкция</div>
+          <ol style="color:var(--muted);font-size:13px">
+            <li>Подключитесь к точке доступа ESP32.</li>
+            <li>Откройте <code>http://192.168.4.1/</code>.</li>
+            <li>Используйте вкладки для мониторинга и управления.</li>
+          </ol>
+        </div>
+
+      </div>
+    </div>
+
+    <footer class="muted">UI demo. Запросы выполняются к `/api/*`.</footer>
+  </div>
+
+  <script>
+    // --- tabs
+    document.querySelectorAll('button.tab').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        document.querySelectorAll('button.tab').forEach(b=>b.classList.remove('active'));
+        btn.classList.add('active');
+        document.querySelectorAll('.panel').forEach(p=>p.style.display='none');
+        document.getElementById(btn.dataset.tab).style.display='block';
+      });
+    });
+
+    // --- API wrapper
+    const API = {
+      async get(path){ try{const r=await fetch(path); if(!r.ok) throw 0; return r.json(); }catch{return null;} },
+      async post(path,body){ try{const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});return r.ok;}catch{return false;} }
+    };
+
+    // --- mock data
+    function mockScan(){ return [
+      {ssid:'HomeNetwork',rssi:-42,chan:6},
+      {ssid:'CafeFreeWiFi',rssi:-78,chan:11},
+      {ssid:'ESP32-Setup',rssi:-33,chan:1}
+    ]; }
+    function mockClients(){ return [
+      {mac:'AA:BB:CC:11:22:33',ip:'192.168.4.2',last:'5s'},
+      {mac:'DE:AD:BE:EF:00:01',ip:'192.168.4.3',last:'23s'}
+    ]; }
+    function mockSys(){ return {firmware:'v1.0.0-demo',uptime:'00:12:34',freeHeap:'48 KB',flash:'4 MB'}; }
+    function mockLogs(){ return '2025-10-19 12:00:00 System start\n2025-10-19 12:00:03 WiFi AP started\n2025-10-19 12:01:02 Scan completed'; }
+
+    // --- scan
+    const scanBtn=document.getElementById('scanBtn');
+    const lastScan=document.getElementById('lastScan');
+    async function doScan(){ lastScan.textContent='...';
+      const data=await API.get('/api/scan')||mockScan();
+      renderScan(data); lastScan.textContent=new Date().toLocaleTimeString();
+    }
+    scanBtn.onclick=doScan;
+    function renderScan(list){ const tbody=document.querySelector('#scanTable tbody'); tbody.innerHTML='';
+      if(!list.length){ tbody.innerHTML='<tr><td colspan="3" class="empty">Нет сетей</td></tr>'; return }
+      list.sort((a,b)=>(b.rssi||0)-(a.rssi||0));
+      for(const s of list){ const tr=document.createElement('tr'); tr.innerHTML=`<td>${s.ssid}</td><td>${s.rssi}</td><td>${s.chan}</td>`; tbody.appendChild(tr); }
+    }
+
+    // --- clients
+    document.getElementById('refreshClients').onclick=async()=>{
+      const data=await API.get('/api/stations')||mockClients();
+      renderClients(data);
+    };
+    function renderClients(list){ document.getElementById('clientsCount').textContent=list.length;
+      const tbody=document.querySelector('#clientsTable tbody'); tbody.innerHTML='';
+      if(!list.length){ tbody.innerHTML='<tr><td colspan="3" class="empty">Нет клиентов</td></tr>'; return }
+      for(const c of list){ const tr=document.createElement('tr'); tr.innerHTML=`<td>${c.mac}</td><td>${c.ip}</td><td>${c.last}</td>`; tbody.appendChild(tr); }
+    }
+
+    // --- logs
+    const logsContent=document.getElementById('logsContent');
+    document.getElementById('loadLogs').onclick=async()=>{
+      const data=await API.get('/api/logs');
+      const txt=data&&typeof data==='string'?data:mockLogs();
+      logsContent.textContent=txt; document.getElementById('logsSize').textContent=new Blob([txt]).size+' B';
+    };
+
+    document.getElementById('downloadLogs').onclick=()=>{
+      const text=logsContent.textContent||'no logs';
+      const blob=new Blob([text],{type:'text/plain'});
+      const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='system.log'; document.body.appendChild(a); a.click(); a.remove();
+    };
+
+    // --- system
+    document.getElementById('refreshSys').onclick=async()=>{
+      const data=await API.get('/api/sysinfo')||mockSys();
+      document.getElementById('fwVer').textContent=data.firmware;
+      document.getElementById('uptime').textContent=data.uptime;
+      document.getElementById('freeHeap').textContent=data.freeHeap;
+      document.getElementById('flashInfo').textContent=data.flash;
+    };
+
+    document.getElementById('rebootBtn').onclick=async()=>{
+      if(!confirm('Перезагрузить устройство?')) return;
+      const ok=await API.post('/api/reboot',{});
+      alert(ok?'Reboot command sent':'Reboot failed (demo)');
+    };
+
+    (async()=>{ await doScan(); document.getElementById('refreshClients').click(); document.getElementById('refreshSys').click(); })();
+  </script>
+</body>
+</html>

@@ -22,6 +22,7 @@ cd "$PROJECT_DIR"
 
 echo "=== Build project ==="
 idf.py set-target $TARGET
-idf.py build
+
+idf.py fullclean build
 
 echo "=== Finish ==="

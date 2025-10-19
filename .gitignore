@@ -1,6 +1,6 @@
-/build/
+managed_components/
 
-sdkconfig*
+sdkconfig
 sdkconfig/*.bak
 sdkconfig/*.old
 
@@ -10,6 +10,7 @@ sdkconfig/*.old
 __pycache__/
 venv/
 
+*.lock
 *.log
 
 CMakeCache.txt
