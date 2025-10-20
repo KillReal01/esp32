@@ -123,5 +123,5 @@ document.getElementById('rebootBtn').onclick = async ()=>{
 (async()=>{
   // await doScan(); 
   // document.getElementById('refreshClients').click(); 
-  // document.getElementById('refreshSys').click(); 
+  document.getElementById('refreshSys').click(); 
 })();

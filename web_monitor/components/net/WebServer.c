@@ -1,11 +1,47 @@
 #include "WebServer.h"
 #include "esp_log.h"
+#include "esp_netif.h"
+#include "lwip/sockets.h"
+#include "lwip/netdb.h"
+#include "lwip/inet.h"
 
 
 static const char *TAG = "WebServer";
 
 
-// --- helper для отдачи файлов
+static const char *get_client_ip(httpd_req_t *req)
+{
+    static char ip_str[INET6_ADDRSTRLEN] = {0};
+    struct sockaddr_in6 addr;
+    socklen_t len = sizeof(addr);
+
+    if (getpeername(httpd_req_to_sockfd(req), (struct sockaddr *)&addr, &len) < 0) {
+        strcpy(ip_str, "unknown");
+        return ip_str;
+    }
+
+    if (IN6_IS_ADDR_V4MAPPED(&addr.sin6_addr)) {
+        struct in_addr ipv4;
+        memcpy(&ipv4, &addr.sin6_addr.s6_addr[12], sizeof(ipv4));
+        inet_ntop(AF_INET, &ipv4, ip_str, sizeof(ip_str));
+    } else if (addr.sin6_family == AF_INET6) {
+        inet_ntop(AF_INET6, &addr.sin6_addr, ip_str, sizeof(ip_str));
+    } else {
+        strcpy(ip_str, "invalid");
+    }
+
+    return ip_str;
+}
+
+static void log_request(httpd_req_t *req)
+{
+    const char *method = http_method_str(req->method);
+    const char *uri = req->uri;
+    const char *client_ip = get_client_ip(req);
+
+    ESP_LOGI(TAG, "[Request] %s %s from %s", method, uri, client_ip);
+}
+
 static esp_err_t serve_file(httpd_req_t *req, const char *filepath, const char *content_type)
 {
     FILE *f = fopen(filepath, "r");
@@ -28,7 +64,6 @@ static esp_err_t serve_file(httpd_req_t *req, const char *filepath, const char *
     return ESP_OK;
 }
 
-// --- root и статические файлы
 static esp_err_t root_get_handler(httpd_req_t *req)
 {
     return serve_file(req, "/data/index.html", "text/html");
@@ -47,7 +82,7 @@ static esp_err_t js_get_handler(httpd_req_t *req)
 // --- /api/scan
 static esp_err_t scan_get_handler(httpd_req_t *req)
 {
-    ESP_LOGI(TAG, "HTTP %s request to %s", http_method_str(req->method), req->uri);
+    log_request(req);
 
     const char *resp = "[{\"ssid\":\"HomeNetwork\",\"rssi\":-42,\"chan\":6},"
                        "{\"ssid\":\"CafeFreeWiFi\",\"rssi\":-78,\"chan\":11},"
@@ -60,7 +95,7 @@ static esp_err_t scan_get_handler(httpd_req_t *req)
 // --- /api/stations
 static esp_err_t stations_get_handler(httpd_req_t *req)
 {
-    ESP_LOGI(TAG, "HTTP %s request to %s", http_method_str(req->method), req->uri);
+    log_request(req);
 
     const char *resp = "[{\"mac\":\"AA:BB:CC:11:22:33\",\"ip\":\"192.168.4.2\",\"last\":\"5s\"},"
                        "{\"mac\":\"DE:AD:BE:EF:00:01\",\"ip\":\"192.168.4.3\",\"last\":\"23s\"}]";
@@ -72,7 +107,7 @@ static esp_err_t stations_get_handler(httpd_req_t *req)
 // --- /api/logs
 static esp_err_t logs_get_handler(httpd_req_t *req)
 {
-    ESP_LOGI(TAG, "HTTP %s request to %s", http_method_str(req->method), req->uri);
+    log_request(req);
 
     const char *resp = "2025-10-19 12:00:00 System start\n"
                        "2025-10-19 12:00:03 WiFi AP started\n"
@@ -85,7 +120,7 @@ static esp_err_t logs_get_handler(httpd_req_t *req)
 // --- /api/reboot
 static esp_err_t reboot_post_handler(httpd_req_t *req)
 {
-    ESP_LOGI(TAG, "HTTP %s request to %s", http_method_str(req->method), req->uri);
+    log_request(req);
 
     // Здесь можно вставить вызов esp_restart() или просто заглушку
     ESP_LOGI(TAG, "Reboot requested (stub)");
@@ -98,7 +133,7 @@ static esp_err_t reboot_post_handler(httpd_req_t *req)
 // --- /api/sysinfo
 static esp_err_t sysinfo_get_handler(httpd_req_t *req)
 {
-    ESP_LOGI(TAG, "HTTP %s request to %s", http_method_str(req->method), req->uri);
+    log_request(req);
 
     const char *resp = "{\"firmware\":\"v1.0.0-demo\",\"uptime\":\"00:12:34\","
                        "\"freeHeap\":\"48 KB\",\"flash\":\"4 MB\"}";
@@ -107,7 +142,6 @@ static esp_err_t sysinfo_get_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-// --- регистрация ручек
 static void register_uris(httpd_handle_t server)
 {
     httpd_uri_t uris[] = {
