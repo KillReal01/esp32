@@ -20,9 +20,11 @@ source ~/esp-idf/export.sh
 
 cd "$PROJECT_DIR"
 
+echo "=== Clean project ==="
+idf.py fullclean 
+
 echo "=== Build project ==="
 idf.py set-target $TARGET
-
-idf.py fullclean build
+idf.py build
 
 echo "=== Finish ==="
