@@ -1,4 +1,6 @@
 #include "WebServer.h"
+#include "Handlers.h"
+
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "lwip/sockets.h"
@@ -83,12 +85,12 @@ static esp_err_t js_get_handler(httpd_req_t *req)
 static esp_err_t scan_get_handler(httpd_req_t *req)
 {
     log_request(req);
+    char buf[512];
 
-    const char *resp = "[{\"ssid\":\"HomeNetwork\",\"rssi\":-42,\"chan\":6},"
-                       "{\"ssid\":\"CafeFreeWiFi\",\"rssi\":-78,\"chan\":11},"
-                       "{\"ssid\":\"ESP32-Setup\",\"rssi\":-33,\"chan\":1}]";
+    device_scan_networks(buf, sizeof(buf));
+    
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+    httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 
@@ -96,11 +98,12 @@ static esp_err_t scan_get_handler(httpd_req_t *req)
 static esp_err_t stations_get_handler(httpd_req_t *req)
 {
     log_request(req);
+    char buf[256];
 
-    const char *resp = "[{\"mac\":\"AA:BB:CC:11:22:33\",\"ip\":\"192.168.4.2\",\"last\":\"5s\"},"
-                       "{\"mac\":\"DE:AD:BE:EF:00:01\",\"ip\":\"192.168.4.3\",\"last\":\"23s\"}]";
+    device_get_clients(buf, sizeof(buf));
+
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+    httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 
@@ -108,12 +111,12 @@ static esp_err_t stations_get_handler(httpd_req_t *req)
 static esp_err_t logs_get_handler(httpd_req_t *req)
 {
     log_request(req);
+    char buf[1024];
 
-    const char *resp = "2025-10-19 12:00:00 System start\n"
-                       "2025-10-19 12:00:03 WiFi AP started\n"
-                       "2025-10-19 12:01:02 Scan completed\n";
+    device_get_logs(buf, sizeof(buf));
+
     httpd_resp_set_type(req, "text/plain");
-    httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+    httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 
@@ -121,12 +124,12 @@ static esp_err_t logs_get_handler(httpd_req_t *req)
 static esp_err_t reboot_post_handler(httpd_req_t *req)
 {
     log_request(req);
-
-    // Здесь можно вставить вызов esp_restart() или просто заглушку
-    ESP_LOGI(TAG, "Reboot requested (stub)");
     const char *resp = "{\"status\":\"ok\"}";
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+
+    device_reboot();
+
     return ESP_OK;
 }
 
@@ -134,11 +137,12 @@ static esp_err_t reboot_post_handler(httpd_req_t *req)
 static esp_err_t sysinfo_get_handler(httpd_req_t *req)
 {
     log_request(req);
+    char buf[256];
 
-    const char *resp = "{\"firmware\":\"v1.0.0-demo\",\"uptime\":\"00:12:34\","
-                       "\"freeHeap\":\"48 KB\",\"flash\":\"4 MB\"}";
+    device_get_sysinfo(buf, sizeof(buf));
+
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+    httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 

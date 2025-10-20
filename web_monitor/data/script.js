@@ -113,11 +113,19 @@ document.getElementById('refreshSys').onclick = async ()=>{
   document.getElementById('flashInfo').textContent = data.flash;
 };
 
-document.getElementById('rebootBtn').onclick = async ()=>{
-  if(!confirm('Перезагрузить устройство?')) return;
-  const ok = await API.post('/api/reboot', {});
-  alert(ok ? 'Reboot command sent' : 'Reboot failed');
+// document.getElementById('rebootBtn').onclick = async ()=>{
+//   if(!confirm('Перезагрузить устройство?')) return;
+//   const ok = await API.post('/api/reboot', {});
+//   alert(ok ? 'Reboot command sent' : 'Reboot failed');
+// };
+
+document.getElementById('rebootBtn').onclick = () => {
+    if (!confirm('Перезагрузить устройство?')) return;
+    fetch('/api/reboot', { method: 'POST', body: '{}' })
+        .catch(e => console.log('Failed to send reboot command', e));
+    alert('Reboot command sent');
 };
+
 
 // --- initial load
 (async()=>{
