@@ -43,19 +43,6 @@ esp_err_t device_get_sysinfo(char *buf, size_t len)
     return ESP_OK;
 }
 
-// --- wifi scan
-esp_err_t device_scan_networks(char *buf, size_t len)
-{
-    if (!buf || len == 0) return ESP_ERR_INVALID_ARG;
-    // Пример заглушки
-    strncpy(buf,
-            "[{\"ssid\":\"HomeNetwork\",\"rssi\":-42,\"chan\":6},"
-            "{\"ssid\":\"CafeFreeWiFi\",\"rssi\":-78,\"chan\":11},"
-            "{\"ssid\":\"ESP32-Setup\",\"rssi\":-33,\"chan\":1}]",
-            len);
-    return ESP_OK;
-}
-
 // --- clients
 esp_err_t device_get_clients(char *buf, size_t len)
 {

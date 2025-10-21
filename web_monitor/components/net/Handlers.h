@@ -11,9 +11,6 @@ extern "C" {
 esp_err_t device_reboot(void);
 esp_err_t device_get_sysinfo(char *buf, size_t len);
 
-// --- wifi scan
-esp_err_t device_scan_networks(char *buf, size_t len);
-
 // --- clients
 esp_err_t device_get_clients(char *buf, size_t len);
 
