@@ -76,17 +76,26 @@ typedef struct {
 static void wifi_scan_worker(void *arg)
 {
     auto *param = static_cast<scan_task_param_t *>(arg);
-    char buf[4096];
+    constexpr size_t scan_buf_size = 4096;
+    auto *buf = static_cast<char *>(std::malloc(scan_buf_size));
+    if (!buf) {
+        ESP_LOGE(TAG, "No memory for scan response buffer");
+        httpd_resp_send_500(param->req);
+        std::free(param);
+        return;
+    }
 
-    if (device_scan_networks(buf, sizeof(buf)) != ESP_OK) {
+    if (device_scan_networks(buf, scan_buf_size) != ESP_OK) {
         ESP_LOGE(TAG, "WiFi scan failed");
         httpd_resp_send_500(param->req);
+        std::free(buf);
         std::free(param);
         return;
     }
 
     httpd_resp_set_type(param->req, "application/json");
     httpd_resp_send(param->req, buf, HTTPD_RESP_USE_STRLEN);
+    std::free(buf);
     std::free(param);
 }
 

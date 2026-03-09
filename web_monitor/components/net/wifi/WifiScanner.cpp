@@ -1,27 +1,55 @@
 #include "wifi/WifiScanner.h"
 
+#include <cstdarg>
+#include <cstring>
 #include <cstdio>
 
 #include "esp_wifi.h"
 #include "esp_log.h"
 
-#define DEFAULT_SCAN_LIST_SIZE 20
+#define DEFAULT_SCAN_LIST_SIZE 5
 
 static const char *TAG = "WifiScanner";
+
+static void append_to_buf(char *buf, size_t len, size_t *offset, const char *format, ...)
+{
+    if (!buf || !offset || *offset >= len) {
+        return;
+    }
+
+    va_list args;
+    va_start(args, format);
+    int written = std::vsnprintf(buf + *offset, len - *offset, format, args);
+    va_end(args);
+
+    if (written < 0) {
+        return;
+    }
+
+    size_t written_sz = static_cast<size_t>(written);
+    if (written_sz >= len - *offset) {
+        *offset = len - 1;
+        return;
+    }
+
+    *offset += written_sz;
+}
 
 static void print_ap_to_buf(char *buf, size_t len, wifi_ap_record_t *ap_info, uint16_t count)
 {
     size_t offset = 0;
-    offset += std::snprintf(buf + offset, len - offset, "[");
+    append_to_buf(buf, len, &offset, "[");
     for (int i = 0; i < count && offset < len; i++) {
-        offset += std::snprintf(buf + offset, len - offset,
-                                "{\"ssid\":\"%s\",\"rssi\":%d,\"chan\":%d}%s",
-                                reinterpret_cast<const char *>(ap_info[i].ssid),
-                                ap_info[i].rssi,
-                                ap_info[i].primary,
-                                (i + 1 < count) ? "," : "");
+        size_t ssid_len = strnlen(reinterpret_cast<const char *>(ap_info[i].ssid), sizeof(ap_info[i].ssid));
+        append_to_buf(buf, len, &offset,
+                      "{\"ssid\":\"%.*s\",\"rssi\":%d,\"chan\":%d}%s",
+                      static_cast<int>(ssid_len),
+                      reinterpret_cast<const char *>(ap_info[i].ssid),
+                      ap_info[i].rssi,
+                      ap_info[i].primary,
+                      (i + 1 < count) ? "," : "");
     }
-    std::snprintf(buf + offset, len - offset, "]");
+    append_to_buf(buf, len, &offset, "]");
 }
 
 esp_err_t device_scan_networks(char *buf, size_t len)
