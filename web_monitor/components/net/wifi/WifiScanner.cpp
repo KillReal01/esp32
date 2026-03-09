@@ -7,7 +7,7 @@
 #include "esp_wifi.h"
 #include "esp_log.h"
 
-#define DEFAULT_SCAN_LIST_SIZE 5
+#define DEFAULT_SCAN_LIST_SIZE 20
 
 static const char *TAG = "WifiScanner";
 

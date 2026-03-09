@@ -69,53 +69,27 @@ static esp_err_t css_get_handler(httpd_req_t *req) { return serve_file(req, "/da
 static esp_err_t js_get_handler(httpd_req_t *req) { return serve_file(req, "/data/script.js", "application/javascript"); }
 static esp_err_t icon_get_handler(httpd_req_t *req) { return serve_file(req, "/data/favicon.png", "image/x-icon"); }
 
-typedef struct {
-    httpd_req_t *req;
-} scan_task_param_t;
-
-static void wifi_scan_worker(void *arg)
-{
-    auto *param = static_cast<scan_task_param_t *>(arg);
-    constexpr size_t scan_buf_size = 4096;
-    auto *buf = static_cast<char *>(std::malloc(scan_buf_size));
-    if (!buf) {
-        ESP_LOGE(TAG, "No memory for scan response buffer");
-        httpd_resp_send_500(param->req);
-        std::free(param);
-        return;
-    }
-
-    if (device_scan_networks(buf, scan_buf_size) != ESP_OK) {
-        ESP_LOGE(TAG, "WiFi scan failed");
-        httpd_resp_send_500(param->req);
-        std::free(buf);
-        std::free(param);
-        return;
-    }
-
-    httpd_resp_set_type(param->req, "application/json");
-    httpd_resp_send(param->req, buf, HTTPD_RESP_USE_STRLEN);
-    std::free(buf);
-    std::free(param);
-}
 
 static esp_err_t scan_get_handler(httpd_req_t *req)
 {
     log_request(req);
 
-    auto *param = static_cast<scan_task_param_t *>(std::malloc(sizeof(scan_task_param_t)));
-    if (!param) {
+    constexpr size_t scan_buf_size = 4096;
+    auto *buf = static_cast<char *>(std::malloc(scan_buf_size));
+    if (!buf) {
+        ESP_LOGE(TAG, "No memory for scan response buffer");
+    }
+
+    if (device_scan_networks(buf, scan_buf_size) != ESP_OK) {
+        ESP_LOGE(TAG, "WiFi scan failed");
+        std::free(buf);
         return httpd_resp_send_500(req);
     }
 
-    param->req = req;
-
-    if (httpd_queue_work(req->handle, wifi_scan_worker, param) != ESP_OK) {
-        std::free(param);
-        return httpd_resp_send_500(req);
-    }
-
-    return ESP_OK;
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t send_err = httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
+    std::free(buf);
+    return send_err;
 }
 
 static esp_err_t stations_get_handler(httpd_req_t *req)
