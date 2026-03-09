@@ -3,78 +3,85 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>ESP32 Web Monitor — UI</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <title>ESP32 Web Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
   <link rel="icon" type="image/png" href="/favicon.png">
 </head>
 <body>
-  <div class="wrap">
-    <header>
-      <div class="brand">ESP32 Web Monitor</div>
-      <div class="muted">AP: <span class="status">ESP32-AP (192.168.4.1)</span></div>
+  <div class="page">
+    <header class="hero card">
+      <div>
+        <p class="eyebrow">Автономный режим • AP + STA</p>
+        <h1>ESP32 Web Monitor</h1>
+        <p class="muted">Подключитесь к точке доступа устройства и управляйте системой по адресу <code>http://192.168.4.1/</code>.</p>
+      </div>
+      <div class="status-chip">ESP32-AP • 192.168.4.1</div>
     </header>
+
+    <section class="auth card">
+      <label for="authToken">Токен авторизации</label>
+      <div class="auth-row">
+        <input id="authToken" type="password" placeholder="Введите токен" autocomplete="off">
+        <button id="saveToken" class="small">Сохранить</button>
+      </div>
+      <p id="authHint" class="muted">Токен передаётся в заголовке <code>Authorization: Bearer ...</code>.</p>
+    </section>
 
     <nav>
       <button class="tab active" data-tab="scan">Wi‑Fi Scan</button>
       <button class="tab" data-tab="clients">Connected Clients</button>
       <button class="tab" data-tab="logs">Logs</button>
       <button class="tab" data-tab="system">System</button>
-      <button class="tab" data-tab="help">Инструкция</button>
     </nav>
 
-    <div class="grid">
-      <div class="left-col">
-        <div id="scan" class="card panel">
-          <div class="controls">
-            <button id="scanBtn" class="small">Scan now</button>
-            <div class="muted">Последнее сканирование: <span id="lastScan">—</span></div>
-          </div>
-          <table id="scanTable"><thead><tr><th>SSID</th><th>RSSI</th><th>Channel</th></tr></thead><tbody></tbody></table>
-        </div>
-
-        <div id="clients" class="card panel" style="display:none">
-          <div class="controls">
-            <div class="muted">Подключено: <span id="clientsCount">0</span></div>
-            <button id="refreshClients" class="small">Обновить</button>
-          </div>
-          <table id="clientsTable"><thead><tr><th>MAC</th><th>IP</th><th>Last seen</th></tr></thead><tbody></tbody></table>
-        </div>
-
-        <div id="logs" class="card panel" style="display:none">
-          <div class="controls">
-            <button id="loadLogs" class="small">Загрузить</button>
-            <button id="downloadLogs" class="small">Скачать</button>
-            <div class="muted">Размер логов: <span id="logsSize">—</span></div>
-          </div>
-          <div class="logs-pre" id="logsContent">Логи не загружены.</div>
-        </div>
-
-        <div id="system" class="card panel" style="display:none">
-          <div class="controls">
-            <button id="rebootBtn" class="small">Перезагрузить</button>
-            <button id="refreshSys" class="small">Обновить</button>
-          </div>
-          <table><tbody>
-            <tr><th>Firmware</th><td id="fwVer">—</td></tr>
-            <tr><th>Uptime</th><td id="uptime">—</td></tr>
-            <tr><th>Free Heap</th><td id="freeHeap">—</td></tr>
-            <tr><th>Flash</th><td id="flashInfo">—</td></tr>
-          </tbody></table>
-        </div>
-
-        <div id="help" class="card panel" style="display:none">
-          <div class="muted">Инструкция</div>
-          <ol style="color:var(--muted);font-size:13px">
-            <li>Подключитесь к точке доступа ESP32.</li>
-            <li>Откройте <code>http://192.168.4.1/</code>.</li>
-            <li>Используйте вкладки для мониторинга и управления.</li>
-          </ol>
-        </div>
+    <section id="scan" class="card panel">
+      <div class="controls">
+        <button id="scanBtn" class="small">Сканировать сети</button>
+        <span class="muted">Последнее сканирование: <strong id="lastScan">—</strong></span>
       </div>
-    </div>
+      <table id="scanTable">
+        <thead><tr><th>SSID</th><th>RSSI</th><th>Канал</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
 
-    <!-- <footer class="muted">UI demo. Запросы выполняются к `/api/*`.</footer> -->
+    <section id="clients" class="card panel hidden">
+      <div class="controls">
+        <span class="muted">Подключено: <strong id="clientsCount">0</strong></span>
+        <button id="refreshClients" class="small">Обновить список</button>
+      </div>
+      <table id="clientsTable">
+        <thead><tr><th>MAC</th><th>IP</th><th>Last seen</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section id="logs" class="card panel hidden">
+      <div class="controls">
+        <button id="loadLogs" class="small">Загрузить логи</button>
+        <button id="downloadLogs" class="small">Скачать</button>
+        <span class="muted">Размер: <strong id="logsSize">—</strong></span>
+      </div>
+      <pre class="logs-pre" id="logsContent">Логи не загружены.</pre>
+    </section>
+
+    <section id="system" class="card panel hidden">
+      <div class="controls">
+        <button id="refreshSys" class="small">Обновить</button>
+        <button id="rebootBtn" class="small danger">Перезагрузить ESP32</button>
+      </div>
+      <table>
+        <tbody>
+          <tr><th>Firmware</th><td id="fwVer">—</td></tr>
+          <tr><th>Uptime</th><td id="uptime">—</td></tr>
+          <tr><th>Free Heap</th><td id="freeHeap">—</td></tr>
+          <tr><th>Flash</th><td id="flashInfo">—</td></tr>
+        </tbody>
+      </table>
+    </section>
   </div>
 
   <script src="script.js"></script>

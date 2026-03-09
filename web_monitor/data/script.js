@@ -1,135 +1,144 @@
-// --- tabs
-document.querySelectorAll('button.tab').forEach(btn=>{
-  btn.addEventListener('click', ()=>{
-    document.querySelectorAll('button.tab').forEach(b=>b.classList.remove('active'));
+const authTokenInput = document.getElementById('authToken');
+const authHint = document.getElementById('authHint');
+
+const tokenFromStorage = localStorage.getItem('esp32_token') || '';
+authTokenInput.value = tokenFromStorage;
+
+const setHint = (message) => {
+  authHint.textContent = message;
+};
+
+document.getElementById('saveToken').onclick = () => {
+  localStorage.setItem('esp32_token', authTokenInput.value.trim());
+  setHint('Токен сохранён в локальном хранилище браузера.');
+};
+
+document.querySelectorAll('button.tab').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('button.tab').forEach((tab) => tab.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach((panel) => panel.classList.add('hidden'));
     btn.classList.add('active');
-    document.querySelectorAll('.panel').forEach(p=>p.style.display='none');
-    document.getElementById(btn.dataset.tab).style.display='block';
+    document.getElementById(btn.dataset.tab).classList.remove('hidden');
   });
 });
 
-// --- API wrapper
-const API = {
-  async get(path){ 
-    try{
-      const r = await fetch(path);
-      if(!r.ok) throw new Error('HTTP error '+r.status);
-      return r.json();
-    }catch(e){
-      console.warn('API GET failed:', path, e);
-      return null;
-    } 
-  },
-  async post(path, body){ 
-    try{
-      const r = await fetch(path, {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify(body)
-      });
-      return r.ok;
-    }catch(e){
-      console.warn('API POST failed:', path, e);
-      return false;
-    } 
+const request = async (path, options = {}) => {
+  const token = authTokenInput.value.trim();
+  const headers = {
+    ...(options.headers || {}),
+  };
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const response = await fetch(path, { ...options, headers });
+  if (response.status === 401) {
+    setHint('Ошибка 401: введите корректный токен авторизации.');
+    return null;
+  }
+
+  return response;
+};
+
+const getJson = async (path) => {
+  try {
+    const response = await request(path);
+    if (!response || !response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
   }
 };
 
-// --- scan
-const scanBtn = document.getElementById('scanBtn');
-const lastScan = document.getElementById('lastScan');
-
-async function doScan(){ 
-  lastScan.textContent='...';
-  const data = await API.get('/api/scan');
-  renderScan(data || []);
-  lastScan.textContent = new Date().toLocaleTimeString();
+function renderEmpty(tableSelector, message, colspan) {
+  const tbody = document.querySelector(`${tableSelector} tbody`);
+  tbody.innerHTML = `<tr><td colspan="${colspan}" class="empty">${message}</td></tr>`;
 }
-scanBtn.onclick = doScan;
 
-function renderScan(list){ 
-  const tbody = document.querySelector('#scanTable tbody'); 
+async function doScan() {
+  document.getElementById('lastScan').textContent = '...';
+  const data = await getJson('/api/scan');
+  const tbody = document.querySelector('#scanTable tbody');
   tbody.innerHTML = '';
-  if(!list.length){ 
-    tbody.innerHTML = '<tr><td colspan="3" class="empty">Нет сетей</td></tr>'; 
+
+  if (!data || !data.length) {
+    renderEmpty('#scanTable', 'Сети не найдены', 3);
+  } else {
+    data.sort((a, b) => (b.rssi || 0) - (a.rssi || 0));
+    for (const item of data) {
+      const row = document.createElement('tr');
+      row.innerHTML = `<td>${item.ssid || '-'}</td><td>${item.rssi ?? '-'}</td><td>${item.chan ?? '-'}</td>`;
+      tbody.appendChild(row);
+    }
+  }
+
+  document.getElementById('lastScan').textContent = new Date().toLocaleTimeString();
+}
+
+document.getElementById('scanBtn').onclick = doScan;
+
+document.getElementById('refreshClients').onclick = async () => {
+  const data = await getJson('/api/stations');
+  document.getElementById('clientsCount').textContent = data?.length || 0;
+
+  const tbody = document.querySelector('#clientsTable tbody');
+  tbody.innerHTML = '';
+
+  if (!data || !data.length) {
+    renderEmpty('#clientsTable', 'Нет подключённых клиентов', 3);
     return;
   }
-  list.sort((a,b)=>(b.rssi||0)-(a.rssi||0));
-  for(const s of list){ 
-    const tr = document.createElement('tr'); 
-    tr.innerHTML = `<td>${s.ssid}</td><td>${s.rssi}</td><td>${s.chan}</td>`; 
-    tbody.appendChild(tr); 
-  }
-}
 
-// --- clients
-document.getElementById('refreshClients').onclick = async ()=>{
-  const data = await API.get('/api/stations');
-  renderClients(data || []);
-};
-function renderClients(list){ 
-  document.getElementById('clientsCount').textContent = list.length;
-  const tbody = document.querySelector('#clientsTable tbody'); 
-  tbody.innerHTML = '';
-  if(!list.length){ 
-    tbody.innerHTML = '<tr><td colspan="3" class="empty">Нет клиентов</td></tr>'; 
-    return;
+  for (const item of data) {
+    const row = document.createElement('tr');
+    row.innerHTML = `<td>${item.mac || '-'}</td><td>${item.ip || '-'}</td><td>${item.last || '-'}</td>`;
+    tbody.appendChild(row);
   }
-  for(const c of list){ 
-    const tr = document.createElement('tr'); 
-    tr.innerHTML = `<td>${c.mac}</td><td>${c.ip}</td><td>${c.last}</td>`; 
-    tbody.appendChild(tr); 
-  }
-}
-
-// --- logs
-const logsContent = document.getElementById('logsContent');
-document.getElementById('loadLogs').onclick = async ()=>{
-  const data = await fetch('/api/logs')
-    .then(r=>r.ok ? r.text() : null)
-    .catch(()=>null);
-  logsContent.textContent = data || 'Логи недоступны';
-  document.getElementById('logsSize').textContent = new Blob([logsContent.textContent]).size+' B';
 };
 
-document.getElementById('downloadLogs').onclick = ()=>{
-  const text = logsContent.textContent || '';
-  const blob = new Blob([text], {type:'text/plain'});
-  const a = document.createElement('a'); 
-  a.href = URL.createObjectURL(blob); 
-  a.download = 'system.log'; 
-  document.body.appendChild(a); 
-  a.click(); 
+document.getElementById('loadLogs').onclick = async () => {
+  const response = await request('/api/logs');
+  const logs = response && response.ok ? await response.text() : 'Логи недоступны.';
+  document.getElementById('logsContent').textContent = logs;
+  document.getElementById('logsSize').textContent = `${new Blob([logs]).size} B`;
+};
+
+document.getElementById('downloadLogs').onclick = () => {
+  const text = document.getElementById('logsContent').textContent || '';
+  const blob = new Blob([text], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'esp32.log';
+  document.body.appendChild(a);
+  a.click();
+  URL.revokeObjectURL(url);
   a.remove();
 };
 
-// --- system
-document.getElementById('refreshSys').onclick = async ()=>{
-  const data = await API.get('/api/sysinfo');
-  if(!data) return;
-  document.getElementById('fwVer').textContent = data.firmware;
-  document.getElementById('uptime').textContent = data.uptime;
-  document.getElementById('freeHeap').textContent = data.freeHeap;
-  document.getElementById('flashInfo').textContent = data.flash;
+document.getElementById('refreshSys').onclick = async () => {
+  const data = await getJson('/api/sysinfo');
+  if (!data) return;
+
+  document.getElementById('fwVer').textContent = data.firmware || '-';
+  document.getElementById('uptime').textContent = data.uptime || '-';
+  document.getElementById('freeHeap').textContent = data.freeHeap || '-';
+  document.getElementById('flashInfo').textContent = data.flash || '-';
 };
 
-// document.getElementById('rebootBtn').onclick = async ()=>{
-//   if(!confirm('Перезагрузить устройство?')) return;
-//   const ok = await API.post('/api/reboot', {});
-//   alert(ok ? 'Reboot command sent' : 'Reboot failed');
-// };
+document.getElementById('rebootBtn').onclick = async () => {
+  if (!confirm('Перезагрузить устройство?')) return;
 
-document.getElementById('rebootBtn').onclick = () => {
-    if (!confirm('Перезагрузить устройство?')) return;
-    fetch('/api/reboot', { method: 'POST', body: '{}' })
-        .catch(e => console.log('Failed to send reboot command', e));
-    alert('Reboot command sent');
+  await request('/api/reboot', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  });
+
+  alert('Команда перезагрузки отправлена.');
 };
 
-
-// --- initial load
-(async()=>{
-  // await doScan(); 
-  // document.getElementById('refreshClients').click(); 
-  document.getElementById('refreshSys').click(); 
-})();
+window.addEventListener('load', () => {
+  document.getElementById('refreshSys').click();
+});
