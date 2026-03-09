@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 #include "esp_log.h"
 #include "lwip/sockets.h"
@@ -69,27 +70,18 @@ static esp_err_t css_get_handler(httpd_req_t *req) { return serve_file(req, "/da
 static esp_err_t js_get_handler(httpd_req_t *req) { return serve_file(req, "/data/script.js", "application/javascript"); }
 static esp_err_t icon_get_handler(httpd_req_t *req) { return serve_file(req, "/data/favicon.png", "image/x-icon"); }
 
-
 static esp_err_t scan_get_handler(httpd_req_t *req)
 {
     log_request(req);
 
-    constexpr size_t scan_buf_size = 4096;
-    auto *buf = static_cast<char *>(std::malloc(scan_buf_size));
-    if (!buf) {
-        ESP_LOGE(TAG, "No memory for scan response buffer");
-    }
-
-    if (device_scan_networks(buf, scan_buf_size) != ESP_OK) {
+    std::string json;
+    if (device_scan_networks(json) != ESP_OK) {
         ESP_LOGE(TAG, "WiFi scan failed");
-        std::free(buf);
         return httpd_resp_send_500(req);
     }
 
     httpd_resp_set_type(req, "application/json");
-    esp_err_t send_err = httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
-    std::free(buf);
-    return send_err;
+    return httpd_resp_send(req, json.c_str(), json.size());
 }
 
 static esp_err_t stations_get_handler(httpd_req_t *req)

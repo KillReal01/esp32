@@ -3,61 +3,49 @@
 #include <cstdarg>
 #include <cstring>
 #include <cstdio>
+#include <string>
+#include <vector>
 
 #include "esp_wifi.h"
 #include "esp_log.h"
 
-#define DEFAULT_SCAN_LIST_SIZE 20
 
 static const char *TAG = "WifiScanner";
 
-static void append_to_buf(char *buf, size_t len, size_t *offset, const char *format, ...)
+static std::string print_ap_to_buf(const std::vector<wifi_ap_record_t>& aps)
 {
-    if (!buf || !offset || *offset >= len) {
-        return;
+    std::string json;
+    json.reserve(512);
+
+    json += "[";
+
+    for (size_t i = 0; i < aps.size(); ++i) {
+        const auto& ap = aps[i];
+
+        size_t ssid_len = strnlen(
+            reinterpret_cast<const char*>(ap.ssid),
+            sizeof(ap.ssid));
+
+        json += "{\"ssid\":\"";
+        json.append(reinterpret_cast<const char*>(ap.ssid), ssid_len);
+        json += "\",\"rssi\":";
+        json += std::to_string(ap.rssi);
+        json += ",\"chan\":";
+        json += std::to_string(ap.primary);
+        json += "}";
+
+        if (i + 1 < aps.size()) {
+            json += ",";
+        }
     }
 
-    va_list args;
-    va_start(args, format);
-    int written = std::vsnprintf(buf + *offset, len - *offset, format, args);
-    va_end(args);
+    json += "]";
 
-    if (written < 0) {
-        return;
-    }
-
-    size_t written_sz = static_cast<size_t>(written);
-    if (written_sz >= len - *offset) {
-        *offset = len - 1;
-        return;
-    }
-
-    *offset += written_sz;
+    return json;
 }
 
-static void print_ap_to_buf(char *buf, size_t len, wifi_ap_record_t *ap_info, uint16_t count)
+esp_err_t device_scan_networks(std::string& out)
 {
-    size_t offset = 0;
-    append_to_buf(buf, len, &offset, "[");
-    for (int i = 0; i < count && offset < len; i++) {
-        size_t ssid_len = strnlen(reinterpret_cast<const char *>(ap_info[i].ssid), sizeof(ap_info[i].ssid));
-        append_to_buf(buf, len, &offset,
-                      "{\"ssid\":\"%.*s\",\"rssi\":%d,\"chan\":%d}%s",
-                      static_cast<int>(ssid_len),
-                      reinterpret_cast<const char *>(ap_info[i].ssid),
-                      ap_info[i].rssi,
-                      ap_info[i].primary,
-                      (i + 1 < count) ? "," : "");
-    }
-    append_to_buf(buf, len, &offset, "]");
-}
-
-esp_err_t device_scan_networks(char *buf, size_t len)
-{
-    if (!buf || len == 0) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
     ESP_LOGI(TAG, "Starting WiFi scan");
 
     wifi_mode_t mode;
@@ -80,18 +68,19 @@ esp_err_t device_scan_networks(char *buf, size_t len)
     ESP_LOGI(TAG, "Scan complete");
 
     uint16_t ap_count = 0;
-    wifi_ap_record_t ap_info[DEFAULT_SCAN_LIST_SIZE];
     ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
 
-    if (ap_count > DEFAULT_SCAN_LIST_SIZE) {
-        ap_count = DEFAULT_SCAN_LIST_SIZE;
+    std::vector<wifi_ap_record_t> ap_info(ap_count);
+    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&ap_count, ap_info.data()));
+
+    ESP_LOGI(TAG, "Found %u APs", ap_info.size());
+    out = print_ap_to_buf(ap_info);
+    ESP_LOGI(TAG, "Scan results prepared");
+
+    if (mode != WIFI_MODE_APSTA) {
+        ESP_ERROR_CHECK(esp_wifi_set_mode(mode));
+        ESP_LOGI(TAG, "Wifi mode restored");
     }
 
-    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&ap_count, ap_info));
-    ESP_LOGI(TAG, "Found %u APs", ap_count);
-
-    print_ap_to_buf(buf, len, ap_info, ap_count);
-
-    ESP_LOGI(TAG, "Scan results prepared");
     return ESP_OK;
 }

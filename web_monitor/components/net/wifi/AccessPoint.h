@@ -3,18 +3,9 @@
 
 #include "esp_err.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 
 esp_err_t access_point_init_nvs(void);
-
 esp_err_t access_point_start_softap(void);
 
 
-#ifdef __cplusplus
-}
-#endif
-
-#endif
+#endif // ACCESS_POINT_H
