@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "LittleFs.c"
+    SRCS "LittleFs.cpp"
     INCLUDE_DIRS "."
     REQUIRES  log
 )

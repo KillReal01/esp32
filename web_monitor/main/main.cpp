@@ -7,41 +7,43 @@
 #include "esp_log.h"
 #include "esp_err.h"
 
-
 static const char *TAG = "Application";
 
-
-void app_main(void)
+extern "C" void app_main(void)
 {
     ESP_LOGI(TAG, "==== Application start ====");
 
     ESP_LOGI(TAG, "Initializing NVS...");
-    if (access_point_init_nvs() == ESP_OK)
+    if (access_point_init_nvs() == ESP_OK) {
         ESP_LOGI(TAG, "NVS initialized successfully");
-    else
+    } else {
         ESP_LOGE(TAG, "Failed to initialize NVS");
+    }
 
     ESP_LOGI(TAG, "Mounting LittleFS...");
-    if (mount_littlefs() == ESP_OK)
+    if (mount_littlefs() == ESP_OK) {
         ESP_LOGI(TAG, "LittleFS mounted successfully");
-    else
+    } else {
         ESP_LOGE(TAG, "Failed to mount LittleFS");
+    }
 
     ESP_LOGI(TAG, "Starting SoftAP...");
-    if (access_point_start_softap() == ESP_OK)
+    if (access_point_start_softap() == ESP_OK) {
         ESP_LOGI(TAG, "SoftAP started successfully");
-    else
+    } else {
         ESP_LOGE(TAG, "Failed to start SoftAP");
+    }
 
     ESP_LOGI(TAG, "Starting WebServer...");
     httpd_handle_t server = webserver_start();
-    if (server != NULL)
+    if (server != nullptr) {
         ESP_LOGI(TAG, "WebServer started successfully");
-    else
+    } else {
         ESP_LOGE(TAG, "Failed to start WebServer");
+    }
 
     ESP_LOGI(TAG, "Entering main loop");
-    while (1) {
+    while (true) {
         vTaskDelay(pdMS_TO_TICKS(10000));
     }
 }
