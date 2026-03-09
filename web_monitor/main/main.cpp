@@ -1,49 +1,27 @@
-#include "wifi/AccessPoint.h"
-#include "WebServer.h"
+#include "Handlers.h"
 #include "LittleFs.h"
+#include "WebServer.h"
+#include "wifi/AccessPoint.h"
+#include "wifi/WifiScanner.h"
 
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "esp_log.h"
-#include "esp_err.h"
 
-static const char *TAG = "Application";
+namespace {
+constexpr const char *TAG = "Application";
+}
 
 extern "C" void app_main(void)
 {
-    ESP_LOGI(TAG, "==== Application start ====");
+    AccessPointManager apManager("ESP32-AP", "esp32pass", 1, 8);
+    WifiScanner scanner;
+    AuthService authService("esp32_secure_token");
+    DeviceService deviceService(apManager);
+    WebServer webServer(apManager, scanner, deviceService, authService);
 
-    ESP_LOGI(TAG, "Initializing NVS...");
-    if (access_point_init_nvs() == ESP_OK) {
-        ESP_LOGI(TAG, "NVS initialized successfully");
-    } else {
-        ESP_LOGE(TAG, "Failed to initialize NVS");
-    }
+    ESP_ERROR_CHECK(apManager.initNvs());
+    ESP_ERROR_CHECK(mount_littlefs());
+    ESP_ERROR_CHECK(apManager.startSoftAp());
+    ESP_ERROR_CHECK(webServer.start() != nullptr ? ESP_OK : ESP_FAIL);
 
-    ESP_LOGI(TAG, "Mounting LittleFS...");
-    if (mount_littlefs() == ESP_OK) {
-        ESP_LOGI(TAG, "LittleFS mounted successfully");
-    } else {
-        ESP_LOGE(TAG, "Failed to mount LittleFS");
-    }
-
-    ESP_LOGI(TAG, "Starting SoftAP...");
-    if (access_point_start_softap() == ESP_OK) {
-        ESP_LOGI(TAG, "SoftAP started successfully");
-    } else {
-        ESP_LOGE(TAG, "Failed to start SoftAP");
-    }
-
-    ESP_LOGI(TAG, "Starting WebServer...");
-    httpd_handle_t server = webserver_start();
-    if (server != nullptr) {
-        ESP_LOGI(TAG, "WebServer started successfully");
-    } else {
-        ESP_LOGE(TAG, "Failed to start WebServer");
-    }
-
-    ESP_LOGI(TAG, "Entering main loop");
-    while (true) {
-        vTaskDelay(pdMS_TO_TICKS(10000));
-    }
+    ESP_LOGI(TAG, "System started");
 }
