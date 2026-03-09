@@ -1,169 +1,261 @@
 #include "WebServer.h"
-#include "Handlers.h"
-#include "wifi/WifiScanner.h"
 
 #include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <string>
 
 #include "esp_log.h"
-#include "lwip/sockets.h"
-#include "lwip/netdb.h"
 #include "lwip/inet.h"
 
-static const char *TAG = "WebServer";
+namespace {
+constexpr const char *TAG = "WebServer";
+constexpr size_t kMaxBody = 512;
 
-static const char *get_client_ip(httpd_req_t *req)
+esp_err_t sendBadRequest(httpd_req_t *req, const char *message = "{\"error\":\"bad_request\"}")
 {
-    static char ip_str[INET6_ADDRSTRLEN] = {0};
-    sockaddr_in6 addr{};
-    socklen_t len = sizeof(addr);
-
-    if (getpeername(httpd_req_to_sockfd(req), reinterpret_cast<sockaddr *>(&addr), &len) < 0) {
-        std::strcpy(ip_str, "unknown");
-        return ip_str;
-    }
-
-    if (IN6_IS_ADDR_V4MAPPED(&addr.sin6_addr)) {
-        in_addr ipv4{};
-        std::memcpy(&ipv4, &addr.sin6_addr.s6_addr[12], sizeof(ipv4));
-        inet_ntop(AF_INET, &ipv4, ip_str, sizeof(ip_str));
-    } else if (addr.sin6_family == AF_INET6) {
-        inet_ntop(AF_INET6, &addr.sin6_addr, ip_str, sizeof(ip_str));
-    } else {
-        std::strcpy(ip_str, "invalid");
-    }
-
-    return ip_str;
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, message, HTTPD_RESP_USE_STRLEN);
 }
 
-static void log_request(httpd_req_t *req)
+esp_err_t sendNotFound(httpd_req_t *req, const char *message = "{\"error\":\"not_found\"}")
 {
-    const http_method method = static_cast<http_method>(req->method);
-    ESP_LOGI(TAG, "[Request] %s %s from %s",
-             http_method_str(method), req->uri, get_client_ip(req));
+    httpd_resp_set_status(req, "404 Not Found");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, message, HTTPD_RESP_USE_STRLEN);
+}
 }
 
-static esp_err_t serve_file(httpd_req_t *req, const char *filepath, const char *content_type)
+WebServer::WebServer(AccessPointManager& apManager, WifiScanner& scanner, DeviceService& deviceService, AuthService& authService)
+    : apManager_(apManager), scanner_(scanner), deviceService_(deviceService), authService_(authService)
+{
+}
+
+WebServer* WebServer::fromReq(httpd_req_t *req)
+{
+    return static_cast<WebServer*>(req->user_ctx);
+}
+
+esp_err_t WebServer::serveFile(httpd_req_t *req, const char *filepath, const char *contentType)
 {
     FILE *f = std::fopen(filepath, "r");
     if (!f) {
-        ESP_LOGE(TAG, "Failed to open %s", filepath);
-        httpd_resp_send_404(req);
+        sendNotFound(req);
         return ESP_FAIL;
     }
 
-    httpd_resp_set_type(req, content_type);
-    char buf[512];
-    size_t read_bytes;
-    while ((read_bytes = std::fread(buf, 1, sizeof(buf), f)) > 0) {
-        httpd_resp_send_chunk(req, buf, read_bytes);
+    httpd_resp_set_type(req, contentType);
+    char buffer[512];
+    size_t readBytes = 0;
+    while ((readBytes = std::fread(buffer, 1, sizeof(buffer), f)) > 0) {
+        httpd_resp_send_chunk(req, buffer, readBytes);
     }
     std::fclose(f);
     httpd_resp_send_chunk(req, nullptr, 0);
     return ESP_OK;
 }
 
-static esp_err_t root_get_handler(httpd_req_t *req) { return serve_file(req, "/data/index.html", "text/html"); }
-static esp_err_t css_get_handler(httpd_req_t *req) { return serve_file(req, "/data/style.css", "text/css"); }
-static esp_err_t js_get_handler(httpd_req_t *req) { return serve_file(req, "/data/script.js", "application/javascript"); }
-static esp_err_t icon_get_handler(httpd_req_t *req) { return serve_file(req, "/data/favicon.png", "image/x-icon"); }
-
-static esp_err_t scan_get_handler(httpd_req_t *req)
+std::string WebServer::getHeader(httpd_req_t *req, const char* name)
 {
-    log_request(req);
+    const size_t len = httpd_req_get_hdr_value_len(req, name);
+    if (len == 0) return {};
 
-    std::string json;
-    if (device_scan_networks(json) != ESP_OK) {
-        ESP_LOGE(TAG, "WiFi scan failed");
-        return httpd_resp_send_500(req);
+    std::string value(len + 1, '\0');
+    if (httpd_req_get_hdr_value_str(req, name, value.data(), value.size()) != ESP_OK) {
+        return {};
     }
 
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_send(req, json.c_str(), json.size());
+    value.resize(len);
+    return value;
 }
 
-static esp_err_t stations_get_handler(httpd_req_t *req)
+std::string WebServer::getBody(httpd_req_t *req)
 {
-    log_request(req);
-    char buf[256];
-    device_get_clients(buf, sizeof(buf));
+    if (req->content_len <= 0 || req->content_len > static_cast<int>(kMaxBody)) {
+        return {};
+    }
 
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
+    std::string body(req->content_len, '\0');
+    int received = httpd_req_recv(req, body.data(), body.size());
+    if (received <= 0) {
+        return {};
+    }
+    body.resize(received);
+    return body;
 }
 
-static esp_err_t logs_get_handler(httpd_req_t *req)
+std::string WebServer::getQueryParam(httpd_req_t *req, const char* key)
 {
-    log_request(req);
-    char buf[1024];
-    device_get_logs(buf, sizeof(buf));
+    const size_t queryLen = httpd_req_get_url_query_len(req);
+    if (queryLen == 0) return {};
 
+    std::string query(queryLen + 1, '\0');
+    if (httpd_req_get_url_query_str(req, query.data(), query.size()) != ESP_OK) {
+        return {};
+    }
+
+    char value[64] = {0};
+    if (httpd_query_key_value(query.c_str(), key, value, sizeof(value)) != ESP_OK) {
+        return {};
+    }
+    return value;
+}
+
+bool WebServer::ensureAuthorized(httpd_req_t *req)
+{
+    const std::string authHeader = getHeader(req, "Authorization");
+    if (!authService_.isHeaderAuthorized(authHeader)) {
+        httpd_resp_set_status(req, "401 Unauthorized");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, "{\"error\":\"unauthorized\"}", HTTPD_RESP_USE_STRLEN);
+        return false;
+    }
+    return true;
+}
+
+esp_err_t WebServer::rootGetHandler(httpd_req_t *req) { return serveFile(req, "/data/index.html", "text/html"); }
+esp_err_t WebServer::cssGetHandler(httpd_req_t *req) { return serveFile(req, "/data/style.css", "text/css"); }
+esp_err_t WebServer::jsGetHandler(httpd_req_t *req) { return serveFile(req, "/data/script.js", "application/javascript"); }
+esp_err_t WebServer::iconGetHandler(httpd_req_t *req) { return serveFile(req, "/data/favicon.png", "image/x-icon"); }
+
+esp_err_t WebServer::scanGetHandler(httpd_req_t *req) { return fromReq(req)->handleScan(req); }
+esp_err_t WebServer::stationsGetHandler(httpd_req_t *req) { return fromReq(req)->handleStations(req); }
+esp_err_t WebServer::logsGetHandler(httpd_req_t *req) { return fromReq(req)->handleLogs(req); }
+esp_err_t WebServer::rebootPostHandler(httpd_req_t *req) { return fromReq(req)->handleReboot(req); }
+esp_err_t WebServer::sysinfoGetHandler(httpd_req_t *req) { return fromReq(req)->handleSysinfo(req); }
+esp_err_t WebServer::connectPostHandler(httpd_req_t *req) { return fromReq(req)->handleConnect(req); }
+esp_err_t WebServer::validateTokenPostHandler(httpd_req_t *req) { return fromReq(req)->handleValidateToken(req); }
+esp_err_t WebServer::apClientsGetHandler(httpd_req_t *req) { return fromReq(req)->handleApClients(req); }
+
+esp_err_t WebServer::handleScan(httpd_req_t *req)
+{
+    if (!ensureAuthorized(req)) return ESP_OK;
+    const auto networks = scanner_.scanNetworks();
+    const auto payload = scanner_.toJson(networks);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, payload.c_str(), payload.size());
+}
+
+esp_err_t WebServer::handleStations(httpd_req_t *req)
+{
+    if (!ensureAuthorized(req)) return ESP_OK;
+    const auto payload = deviceService_.getClientsJson();
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, payload.c_str(), payload.size());
+}
+
+esp_err_t WebServer::handleLogs(httpd_req_t *req)
+{
+    if (!ensureAuthorized(req)) return ESP_OK;
+    const auto payload = deviceService_.getLogs();
     httpd_resp_set_type(req, "text/plain");
-    httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
+    return httpd_resp_send(req, payload.c_str(), payload.size());
 }
 
-static esp_err_t reboot_post_handler(httpd_req_t *req)
+esp_err_t WebServer::handleReboot(httpd_req_t *req)
 {
-    log_request(req);
-    const char *resp = "{\"status\":\"ok\"}";
-
+    if (!ensureAuthorized(req)) return ESP_OK;
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
-
-    device_reboot();
+    httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+    deviceService_.reboot();
     return ESP_OK;
 }
 
-static esp_err_t sysinfo_get_handler(httpd_req_t *req)
+esp_err_t WebServer::handleSysinfo(httpd_req_t *req)
 {
-    log_request(req);
-    char buf[256];
-    device_get_sysinfo(buf, sizeof(buf));
-
+    if (!ensureAuthorized(req)) return ESP_OK;
+    const auto payload = deviceService_.getSysinfoJson();
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
+    return httpd_resp_send(req, payload.c_str(), payload.size());
 }
 
-static void register_uri(httpd_handle_t server, const char *uri, httpd_method_t method, esp_err_t (*handler)(httpd_req_t *))
+esp_err_t WebServer::handleConnect(httpd_req_t *req)
+{
+    if (!ensureAuthorized(req)) return ESP_OK;
+    const std::string body = getBody(req);
+
+    const auto sPos = body.find("\"ssid\":\"");
+    const auto pPos = body.find("\"password\":\"");
+    if (sPos == std::string::npos || pPos == std::string::npos) {
+        return sendBadRequest(req);
+    }
+
+    const auto ssidStart = sPos + 8;
+    const auto ssidEnd = body.find('"', ssidStart);
+    const auto passStart = pPos + 12;
+    const auto passEnd = body.find('"', passStart);
+    if (ssidEnd == std::string::npos || passEnd == std::string::npos || ssidEnd < ssidStart || passEnd < passStart) {
+        return sendBadRequest(req);
+    }
+    const std::string ssid = body.substr(ssidStart, ssidEnd - ssidStart);
+    const std::string pass = body.substr(passStart, passEnd - passStart);
+
+    const esp_err_t err = apManager_.connectToExternalAp(ssid, pass);
+    httpd_resp_set_type(req, "application/json");
+    if (err != ESP_OK) {
+        return httpd_resp_send(req, "{\"status\":\"error\"}", HTTPD_RESP_USE_STRLEN);
+    }
+    return httpd_resp_send(req, "{\"status\":\"connecting\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+esp_err_t WebServer::handleValidateToken(httpd_req_t *req)
+{
+    const std::string body = getBody(req);
+    const auto tokenPos = body.find("\"token\":\"");
+    if (tokenPos == std::string::npos) return sendBadRequest(req);
+
+    const auto tokenStart = tokenPos + 9;
+    const auto tokenEnd = body.find('"', tokenStart);
+    if (tokenEnd == std::string::npos || tokenEnd < tokenStart) return sendBadRequest(req);
+    const std::string token = body.substr(tokenStart, tokenEnd - tokenStart);
+
+    const auto payload = authService_.validateTokenResponse(token);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, payload.c_str(), payload.size());
+}
+
+esp_err_t WebServer::handleApClients(httpd_req_t *req)
+{
+    if (!ensureAuthorized(req)) return ESP_OK;
+    const std::string bssid = getQueryParam(req, "bssid");
+    const auto payload = deviceService_.getStationsForApJson(bssid);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, payload.c_str(), payload.size());
+}
+
+void WebServer::registerUri(httpd_handle_t server, const char *uri, httpd_method_t method, esp_err_t (*handler)(httpd_req_t *))
 {
     httpd_uri_t cfg{};
     cfg.uri = uri;
     cfg.method = method;
     cfg.handler = handler;
-    cfg.user_ctx = nullptr;
+    cfg.user_ctx = this;
     httpd_register_uri_handler(server, &cfg);
 }
 
-static void register_uris(httpd_handle_t server)
+void WebServer::registerUris(httpd_handle_t server)
 {
-    register_uri(server, "/", HTTP_GET, root_get_handler);
-    register_uri(server, "/style.css", HTTP_GET, css_get_handler);
-    register_uri(server, "/script.js", HTTP_GET, js_get_handler);
-    register_uri(server, "/favicon.ico", HTTP_GET, icon_get_handler);
-    register_uri(server, "/api/scan", HTTP_GET, scan_get_handler);
-    register_uri(server, "/api/stations", HTTP_GET, stations_get_handler);
-    register_uri(server, "/api/logs", HTTP_GET, logs_get_handler);
-    register_uri(server, "/api/reboot", HTTP_POST, reboot_post_handler);
-    register_uri(server, "/api/sysinfo", HTTP_GET, sysinfo_get_handler);
+    registerUri(server, "/", HTTP_GET, rootGetHandler);
+    registerUri(server, "/style.css", HTTP_GET, cssGetHandler);
+    registerUri(server, "/script.js", HTTP_GET, jsGetHandler);
+    registerUri(server, "/favicon.ico", HTTP_GET, iconGetHandler);
+    registerUri(server, "/api/scan", HTTP_GET, scanGetHandler);
+    registerUri(server, "/api/stations", HTTP_GET, stationsGetHandler);
+    registerUri(server, "/api/logs", HTTP_GET, logsGetHandler);
+    registerUri(server, "/api/reboot", HTTP_POST, rebootPostHandler);
+    registerUri(server, "/api/sysinfo", HTTP_GET, sysinfoGetHandler);
+    registerUri(server, "/api/connect", HTTP_POST, connectPostHandler);
+    registerUri(server, "/api/token/validate", HTTP_POST, validateTokenPostHandler);
+    registerUri(server, "/api/ap-clients", HTTP_GET, apClientsGetHandler);
 }
 
-httpd_handle_t webserver_start(void)
+httpd_handle_t WebServer::start()
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 12;
+    config.max_uri_handlers = 16;
 
     httpd_handle_t server = nullptr;
     if (httpd_start(&server, &config) == ESP_OK) {
-        register_uris(server);
+        registerUris(server);
         ESP_LOGI(TAG, "Webserver started");
-    } else {
-        ESP_LOGE(TAG, "Failed to start webserver");
     }
-
     return server;
 }

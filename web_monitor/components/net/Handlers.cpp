@@ -2,70 +2,132 @@
 
 #include <cinttypes>
 #include <cstdio>
-#include <cstring>
 
-#include "esp_system.h"
-#include "esp_timer.h"
 #include "esp_flash.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_system.h"
+#include "esp_timer.h"
 
-static const char *TAG = "Handler";
+namespace {
+constexpr const char *TAG = "DeviceService";
 
-esp_err_t device_reboot(void)
+std::string extractBearerToken(std::string_view authHeader)
 {
-    ESP_LOGW(TAG, "Reboot requested, restarting...");
+    constexpr std::string_view kPrefix = "Bearer ";
+    if (authHeader.size() < kPrefix.size() || authHeader.substr(0, kPrefix.size()) != kPrefix) {
+        return {};
+    }
+    return std::string(authHeader.substr(kPrefix.size()));
+}
+
+std::string jsonEscape(std::string_view input)
+{
+    std::string out;
+    out.reserve(input.size());
+    for (char c : input) {
+        if (c == '"' || c == '\\') {
+            out.push_back('\\');
+        }
+        out.push_back(c);
+    }
+    return out;
+}
+} // namespace
+
+AuthService::AuthService(std::string expectedToken) : expectedToken_(std::move(expectedToken)) {}
+
+bool AuthService::isTokenValidFormat(std::string_view token) const
+{
+    if (token.size() < 12 || token.size() > 64) {
+        return false;
+    }
+
+    for (char c : token) {
+        const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+        if (!ok) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool AuthService::isHeaderAuthorized(std::string_view authHeader) const
+{
+    const std::string token = extractBearerToken(authHeader);
+    return isTokenValidFormat(token) && token == expectedToken_;
+}
+
+std::string AuthService::validateTokenResponse(std::string_view token) const
+{
+    const bool formatOk = isTokenValidFormat(token);
+    const bool authorized = formatOk && token == expectedToken_;
+    std::string reason = authorized ? "ok" : (formatOk ? "invalid_credentials" : "invalid_format");
+    return std::string("{\"valid\":") + (authorized ? "true" : "false") +
+           ",\"formatOk\":" + (formatOk ? "true" : "false") +
+           ",\"reason\":\"" + reason + "\"}";
+}
+
+DeviceService::DeviceService(AccessPointManager& apManager) : apManager_(apManager) {}
+
+void DeviceService::reboot() const
+{
+    ESP_LOGW(TAG, "Reboot requested");
     esp_restart();
-    return ESP_OK;
 }
 
-esp_err_t device_get_sysinfo(char *buf, size_t len)
+std::string DeviceService::getSysinfoJson() const
 {
-    if (!buf || len == 0) {
-        return ESP_ERR_INVALID_ARG;
-    }
+    const uint64_t uptimeUs = esp_timer_get_time();
+    const uint32_t uptimeS = uptimeUs / 1000000ULL;
 
-    uint64_t uptime_us = esp_timer_get_time();
-    uint32_t uptime_s = uptime_us / 1000000ULL;
-    uint32_t h = uptime_s / 3600;
-    uint32_t m = (uptime_s % 3600) / 60;
-    uint32_t s = uptime_s % 60;
+    const uint32_t freeHeap = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
+    uint32_t flashSize = 0;
+    esp_flash_get_size(nullptr, &flashSize);
 
-    uint32_t free_heap = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
-    uint32_t flash_size = 0;
-    esp_flash_get_size(nullptr, &flash_size);
+    const int healthScore = static_cast<int>((freeHeap / 1024) > 120 ? 95 : 70);
 
-    std::snprintf(buf, len,
-                  "{\"firmware\":\"v1.0.0\",\"uptime\":\"%02" PRIu32 ":%02" PRIu32 ":%02" PRIu32 "\"," 
-                  "\"freeHeap\":\"%" PRIu32 " KB\",\"flash\":\"%" PRIu32 " KB\"}",
-                  h, m, s, free_heap / 1024, flash_size / 1024);
-
-    return ESP_OK;
+    char buffer[320] = {0};
+    std::snprintf(buffer, sizeof(buffer),
+                  "{\"firmware\":\"v2.0.0\",\"uptimeSec\":%" PRIu32 ",\"freeHeapKb\":%" PRIu32
+                  ",\"flashKb\":%" PRIu32 ",\"healthScore\":%d}",
+                  uptimeS, freeHeap / 1024, flashSize / 1024, healthScore);
+    return buffer;
 }
 
-esp_err_t device_get_clients(char *buf, size_t len)
+std::string DeviceService::getClientsJson() const
 {
-    if (!buf || len == 0) {
-        return ESP_ERR_INVALID_ARG;
+    const auto stations = apManager_.getConnectedStations();
+    std::string json = "[";
+
+    for (size_t i = 0; i < stations.size(); ++i) {
+        const auto& sta = stations[i];
+        json += "{\"mac\":\"" + sta.mac + "\",\"ip\":\"" + sta.ip + "\",\"aid\":" + std::to_string(sta.aid) + "}";
+        if (i + 1 < stations.size()) json += ",";
     }
 
-    std::strncpy(buf,
-                 "[{\"mac\":\"AA:BB:CC:11:22:33\",\"ip\":\"192.168.4.2\",\"last\":\"5s\"},"
-                 "{\"mac\":\"DE:AD:BE:EF:00:01\",\"ip\":\"192.168.4.3\",\"last\":\"23s\"}]",
-                 len);
-    return ESP_OK;
+    json += "]";
+    return json;
 }
 
-esp_err_t device_get_logs(char *buf, size_t len)
+std::string DeviceService::getLogs() const
 {
-    if (!buf || len == 0) {
-        return ESP_ERR_INVALID_ARG;
-    }
+    return "2026-03-09 10:00:00 System started\n"
+           "2026-03-09 10:00:04 SoftAP active\n"
+           "2026-03-09 10:00:08 Business rule: health monitored\n";
+}
 
-    std::strncpy(buf,
-                 "2025-10-19 12:00:00 System start\n"
-                 "2025-10-19 12:00:03 WiFi AP started\n"
-                 "2025-10-19 12:01:02 Scan completed\n",
-                 len);
-    return ESP_OK;
+std::string DeviceService::getStationsForApJson(std::string_view bssid) const
+{
+    const auto stations = apManager_.getConnectedStations();
+    std::string json = "{\"apBssid\":\"" + jsonEscape(bssid) + "\",\"count\":" + std::to_string(stations.size()) + ",\"stations\":";
+
+    json += "[";
+    for (size_t i = 0; i < stations.size(); ++i) {
+        json += "{\"mac\":\"" + stations[i].mac + "\",\"aid\":" + std::to_string(stations[i].aid) + "}";
+        if (i + 1 < stations.size()) json += ",";
+    }
+    json += "]}";
+    return json;
 }

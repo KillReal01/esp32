@@ -1,144 +1,136 @@
 const authTokenInput = document.getElementById('authToken');
 const authHint = document.getElementById('authHint');
 
-const tokenFromStorage = localStorage.getItem('esp32_token') || '';
-authTokenInput.value = tokenFromStorage;
+let scannedNetworks = [];
+let sortState = { field: 'rssi', dir: 'desc' };
 
-const setHint = (message) => {
-  authHint.textContent = message;
-};
+const tokenRegex = /^[A-Za-z0-9_-]{12,64}$/;
+authTokenInput.value = localStorage.getItem('esp32_token') || '';
 
-document.getElementById('saveToken').onclick = () => {
-  localStorage.setItem('esp32_token', authTokenInput.value.trim());
-  setHint('Токен сохранён в локальном хранилище браузера.');
-};
-
-document.querySelectorAll('button.tab').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('button.tab').forEach((tab) => tab.classList.remove('active'));
-    document.querySelectorAll('.panel').forEach((panel) => panel.classList.add('hidden'));
-    btn.classList.add('active');
-    document.getElementById(btn.dataset.tab).classList.remove('hidden');
-  });
-});
+const setHint = (message) => authHint.textContent = message;
 
 const request = async (path, options = {}) => {
   const token = authTokenInput.value.trim();
-  const headers = {
-    ...(options.headers || {}),
-  };
-
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
+  const headers = { ...(options.headers || {}) };
+  if (token) headers.Authorization = `Bearer ${token}`;
 
   const response = await fetch(path, { ...options, headers });
-  if (response.status === 401) {
-    setHint('Ошибка 401: введите корректный токен авторизации.');
-    return null;
-  }
-
+  if (response.status === 401) setHint('Ошибка 401: токен не прошел проверку.');
   return response;
 };
 
-const getJson = async (path) => {
-  try {
-    const response = await request(path);
-    if (!response || !response.ok) return null;
-    return await response.json();
-  } catch {
-    return null;
-  }
+const renderEmpty = (selector, message, colspan) => {
+  document.querySelector(`${selector} tbody`).innerHTML = `<tr><td colspan="${colspan}" class="empty">${message}</td></tr>`;
 };
 
-function renderEmpty(tableSelector, message, colspan) {
-  const tbody = document.querySelector(`${tableSelector} tbody`);
-  tbody.innerHTML = `<tr><td colspan="${colspan}" class="empty">${message}</td></tr>`;
-}
+const sortData = () => {
+  const { field, dir } = sortState;
+  const m = dir === 'asc' ? 1 : -1;
+  scannedNetworks.sort((a, b) => {
+    const av = a[field] ?? '';
+    const bv = b[field] ?? '';
+    if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * m;
+    return String(av).localeCompare(String(bv)) * m;
+  });
+};
 
-async function doScan() {
-  document.getElementById('lastScan').textContent = '...';
-  const data = await getJson('/api/scan');
+const renderScanTable = () => {
   const tbody = document.querySelector('#scanTable tbody');
   tbody.innerHTML = '';
 
-  if (!data || !data.length) {
-    renderEmpty('#scanTable', 'Сети не найдены', 3);
-  } else {
-    data.sort((a, b) => (b.rssi || 0) - (a.rssi || 0));
-    for (const item of data) {
-      const row = document.createElement('tr');
-      row.innerHTML = `<td>${item.ssid || '-'}</td><td>${item.rssi ?? '-'}</td><td>${item.chan ?? '-'}</td>`;
-      tbody.appendChild(row);
-    }
+  if (!scannedNetworks.length) return renderEmpty('#scanTable', 'Сети не найдены', 7);
+
+  for (const item of scannedNetworks) {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${item.ssid || '(hidden)'}</td>
+      <td>${item.bssid || '-'}</td>
+      <td>${item.rssi ?? '-'}</td>
+      <td>${item.chan ?? '-'}</td>
+      <td>${item.auth || '-'}</td>
+      <td>${item.hidden ? 'yes' : 'no'}</td>
+      <td><button class="small connect-btn" data-ssid="${item.ssid || ''}">Подключиться</button></td>`;
+    tbody.appendChild(row);
   }
 
+  document.querySelectorAll('.connect-btn').forEach((btn) => {
+    btn.onclick = async () => {
+      const ssid = btn.dataset.ssid;
+      const password = prompt(`Пароль для ${ssid}`, '');
+      if (password === null) return;
+
+      const r = await request('/api/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ssid, password }),
+      });
+      const data = await r.json();
+      alert(data.status === 'connecting' ? 'Подключение запущено' : 'Ошибка подключения');
+    };
+  });
+};
+
+const doScan = async () => {
+  document.getElementById('lastScan').textContent = '...';
+  const r = await request('/api/scan');
+  if (!r.ok) return;
+
+  scannedNetworks = await r.json();
+  sortData();
+  renderScanTable();
   document.getElementById('lastScan').textContent = new Date().toLocaleTimeString();
-}
+};
 
 document.getElementById('scanBtn').onclick = doScan;
 
-document.getElementById('refreshClients').onclick = async () => {
-  const data = await getJson('/api/stations');
-  document.getElementById('clientsCount').textContent = data?.length || 0;
+document.querySelectorAll('#scanTable th[data-sort]').forEach((th) => {
+  th.onclick = () => {
+    const field = th.dataset.sort;
+    sortState = {
+      field,
+      dir: sortState.field === field && sortState.dir === 'asc' ? 'desc' : 'asc',
+    };
+    sortData();
+    renderScanTable();
+  };
+});
 
+document.getElementById('saveToken').onclick = () => {
+  const token = authTokenInput.value.trim();
+  if (!tokenRegex.test(token)) {
+    setHint('Формат токена неверный. Разрешены A-Za-z0-9_- длиной 12..64.');
+    return;
+  }
+  localStorage.setItem('esp32_token', token);
+  setHint('Токен сохранен.');
+};
+
+document.getElementById('validateToken').onclick = async () => {
+  const token = authTokenInput.value.trim();
+  const r = await fetch('/api/token/validate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+
+  const data = await r.json();
+  setHint(data.valid ? 'Токен валиден.' : `Токен отклонен: ${data.reason}`);
+};
+
+document.getElementById('loadApClients').onclick = async () => {
+  const bssid = document.getElementById('bssidInput').value.trim();
+  const r = await request(`/api/ap-clients?bssid=${encodeURIComponent(bssid)}`);
+  if (!r.ok) return;
+
+  const data = await r.json();
   const tbody = document.querySelector('#clientsTable tbody');
   tbody.innerHTML = '';
 
-  if (!data || !data.length) {
-    renderEmpty('#clientsTable', 'Нет подключённых клиентов', 3);
-    return;
-  }
+  if (!data.stations || !data.stations.length) return renderEmpty('#clientsTable', 'Нет клиентов', 2);
 
-  for (const item of data) {
-    const row = document.createElement('tr');
-    row.innerHTML = `<td>${item.mac || '-'}</td><td>${item.ip || '-'}</td><td>${item.last || '-'}</td>`;
-    tbody.appendChild(row);
-  }
-};
-
-document.getElementById('loadLogs').onclick = async () => {
-  const response = await request('/api/logs');
-  const logs = response && response.ok ? await response.text() : 'Логи недоступны.';
-  document.getElementById('logsContent').textContent = logs;
-  document.getElementById('logsSize').textContent = `${new Blob([logs]).size} B`;
-};
-
-document.getElementById('downloadLogs').onclick = () => {
-  const text = document.getElementById('logsContent').textContent || '';
-  const blob = new Blob([text], { type: 'text/plain' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'esp32.log';
-  document.body.appendChild(a);
-  a.click();
-  URL.revokeObjectURL(url);
-  a.remove();
-};
-
-document.getElementById('refreshSys').onclick = async () => {
-  const data = await getJson('/api/sysinfo');
-  if (!data) return;
-
-  document.getElementById('fwVer').textContent = data.firmware || '-';
-  document.getElementById('uptime').textContent = data.uptime || '-';
-  document.getElementById('freeHeap').textContent = data.freeHeap || '-';
-  document.getElementById('flashInfo').textContent = data.flash || '-';
-};
-
-document.getElementById('rebootBtn').onclick = async () => {
-  if (!confirm('Перезагрузить устройство?')) return;
-
-  await request('/api/reboot', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: '{}',
+  data.stations.forEach((s) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${s.mac}</td><td>${s.aid}</td>`;
+    tbody.appendChild(tr);
   });
-
-  alert('Команда перезагрузки отправлена.');
 };
-
-window.addEventListener('load', () => {
-  document.getElementById('refreshSys').click();
-});

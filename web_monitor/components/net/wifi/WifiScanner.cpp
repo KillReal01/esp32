@@ -1,86 +1,102 @@
 #include "wifi/WifiScanner.h"
 
-#include <cstdarg>
-#include <cstring>
 #include <cstdio>
-#include <string>
-#include <vector>
+#include <cstring>
+#include <utility>
 
-#include "esp_wifi.h"
 #include "esp_log.h"
+#include "esp_wifi.h"
 
+namespace {
+constexpr const char *TAG = "WifiScanner";
 
-static const char *TAG = "WifiScanner";
+std::string formatBssid(const uint8_t bssid[6])
+{
+    char out[18] = {0};
+    std::snprintf(out, sizeof(out), "%02X:%02X:%02X:%02X:%02X:%02X",
+                  bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
+    return out;
+}
 
-static std::string print_ap_to_buf(const std::vector<wifi_ap_record_t>& aps)
+std::string authToString(wifi_auth_mode_t mode)
+{
+    switch (mode) {
+    case WIFI_AUTH_OPEN: return "OPEN";
+    case WIFI_AUTH_WEP: return "WEP";
+    case WIFI_AUTH_WPA_PSK: return "WPA";
+    case WIFI_AUTH_WPA2_PSK: return "WPA2";
+    case WIFI_AUTH_WPA_WPA2_PSK: return "WPA/WPA2";
+    case WIFI_AUTH_WPA2_ENTERPRISE: return "WPA2-ENT";
+    case WIFI_AUTH_WPA3_PSK: return "WPA3";
+    case WIFI_AUTH_WPA2_WPA3_PSK: return "WPA2/WPA3";
+    default: return "UNKNOWN";
+    }
+}
+
+std::string escapeJson(const std::string& input)
+{
+    std::string out;
+    out.reserve(input.size() + 8);
+    for (char c : input) {
+        if (c == '"' || c == '\\') {
+            out.push_back('\\');
+        }
+        out.push_back(c);
+    }
+    return out;
+}
+} // namespace
+
+std::vector<ScannedNetwork> WifiScanner::scanNetworks() const
+{
+    wifi_scan_config_t config{};
+    config.show_hidden = true;
+    ESP_ERROR_CHECK(esp_wifi_scan_start(&config, true));
+
+    uint16_t apCount = 0;
+    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&apCount));
+
+    std::vector<wifi_ap_record_t> records(apCount);
+    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&apCount, records.data()));
+
+    std::vector<ScannedNetwork> result;
+    result.reserve(records.size());
+
+    for (const auto& ap : records) {
+        const size_t ssidLen = strnlen(reinterpret_cast<const char*>(ap.ssid), sizeof(ap.ssid));
+        std::string ssid(reinterpret_cast<const char*>(ap.ssid), ssidLen);
+        ScannedNetwork network;
+        network.ssid = std::move(ssid);
+        network.bssid = formatBssid(ap.bssid);
+        network.rssi = ap.rssi;
+        network.channel = ap.primary;
+        network.auth = authToString(ap.authmode);
+        network.hidden = network.ssid.empty();
+        result.push_back(std::move(network));
+    }
+
+    ESP_LOGI(TAG, "Scan found %u APs", static_cast<unsigned>(result.size()));
+    return result;
+}
+
+std::string WifiScanner::toJson(const std::vector<ScannedNetwork>& networks) const
 {
     std::string json;
-    json.reserve(512);
-
+    json.reserve(networks.size() * 88);
     json += "[";
 
-    for (size_t i = 0; i < aps.size(); ++i) {
-        const auto& ap = aps[i];
-
-        size_t ssid_len = strnlen(
-            reinterpret_cast<const char*>(ap.ssid),
-            sizeof(ap.ssid));
-
-        json += "{\"ssid\":\"";
-        json.append(reinterpret_cast<const char*>(ap.ssid), ssid_len);
-        json += "\",\"rssi\":";
-        json += std::to_string(ap.rssi);
-        json += ",\"chan\":";
-        json += std::to_string(ap.primary);
+    for (size_t i = 0; i < networks.size(); ++i) {
+        const auto& n = networks[i];
+        json += "{\"ssid\":\"" + escapeJson(n.ssid) + "\"";
+        json += ",\"bssid\":\"" + n.bssid + "\"";
+        json += ",\"rssi\":" + std::to_string(n.rssi);
+        json += ",\"chan\":" + std::to_string(n.channel);
+        json += ",\"auth\":\"" + n.auth + "\"";
+        json += ",\"hidden\":" + std::string(n.hidden ? "true" : "false");
         json += "}";
-
-        if (i + 1 < aps.size()) {
-            json += ",";
-        }
+        if (i + 1 < networks.size()) json += ",";
     }
 
     json += "]";
-
     return json;
-}
-
-esp_err_t device_scan_networks(std::string& out)
-{
-    ESP_LOGI(TAG, "Starting WiFi scan");
-
-    wifi_mode_t mode;
-    esp_err_t err = esp_wifi_get_mode(&mode);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "WiFi not initialized (err=0x%x)", err);
-        return err;
-    }
-
-    if (mode != WIFI_MODE_APSTA) {
-        ESP_LOGI(TAG, "Temporarily switching to APSTA mode for scan");
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
-    }
-
-    wifi_scan_config_t scan_config{};
-    scan_config.show_hidden = true;
-
-    ESP_LOGI(TAG, "Scan start");
-    ESP_ERROR_CHECK(esp_wifi_scan_start(&scan_config, true));
-    ESP_LOGI(TAG, "Scan complete");
-
-    uint16_t ap_count = 0;
-    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
-
-    std::vector<wifi_ap_record_t> ap_info(ap_count);
-    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&ap_count, ap_info.data()));
-
-    ESP_LOGI(TAG, "Found %u APs", ap_info.size());
-    out = print_ap_to_buf(ap_info);
-    ESP_LOGI(TAG, "Scan results prepared");
-
-    if (mode != WIFI_MODE_APSTA) {
-        ESP_ERROR_CHECK(esp_wifi_set_mode(mode));
-        ESP_LOGI(TAG, "Wifi mode restored");
-    }
-
-    return ESP_OK;
 }
