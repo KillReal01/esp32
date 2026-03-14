@@ -12,9 +12,14 @@ const logsOutput = document.getElementById('logsOutput');
 const scanBtn = document.getElementById('scanBtn');
 const scanSpinner = document.getElementById('scanSpinner');
 const lastScan = document.getElementById('lastScan');
+const bleScanBtn = document.getElementById('bleScanBtn');
+const bleScanSpinner = document.getElementById('bleScanSpinner');
+const bleLastScan = document.getElementById('bleLastScan');
 
 let scannedNetworks = [];
 let sortState = { field: 'rssi', dir: 'desc' };
+let bleDevices = [];
+let bleSortState = { field: 'rssi', dir: 'desc' };
 
 const tokenRegex = /^[A-Za-z0-9_-]{12,64}$/;
 authTokenInput.value = localStorage.getItem('esp32_token') || '';
@@ -84,10 +89,40 @@ const renderScanTable = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ssid, password }),
       });
+      if (!r.ok) return;
       const data = await r.json();
       alert(data.status === 'connecting' ? 'Подключение запущено' : 'Ошибка подключения');
     };
   });
+};
+
+const sortBleData = () => {
+  const { field, dir } = bleSortState;
+  const m = dir === 'asc' ? 1 : -1;
+  bleDevices.sort((a, b) => {
+    const av = a[field] ?? '';
+    const bv = b[field] ?? '';
+    if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * m;
+    return String(av).localeCompare(String(bv)) * m;
+  });
+};
+
+const renderBleTable = () => {
+  const tbody = document.querySelector('#bleTable tbody');
+  tbody.innerHTML = '';
+
+  if (!bleDevices.length) return renderEmpty('#bleTable', 'Устройства не найдены', 5);
+
+  for (const item of bleDevices) {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${item.name || '-'}</td>
+      <td>${item.addr || '-'}</td>
+      <td>${item.rssi ?? '-'}</td>
+      <td>${item.type ?? '-'}</td>
+      <td>${item.scanRsp ? 'yes' : 'no'}</td>`;
+    tbody.appendChild(row);
+  }
 };
 
 const renderSysinfo = (data) => {
@@ -104,6 +139,13 @@ const setScanLoading = (isLoading) => {
   scanBtn.classList.toggle('loading', isLoading);
   scanSpinner.classList.toggle('active', isLoading);
   lastScan.textContent = isLoading ? 'сканирование…' : lastScan.textContent;
+};
+
+const setBleScanLoading = (isLoading) => {
+  bleScanBtn.disabled = isLoading;
+  bleScanBtn.classList.toggle('loading', isLoading);
+  bleScanSpinner.classList.toggle('active', isLoading);
+  bleLastScan.textContent = isLoading ? 'сканирование…' : bleLastScan.textContent;
 };
 
 const escapeHtml = (value) =>
@@ -143,66 +185,39 @@ const loadLogs = async () => {
   logsOutput.innerHTML = formatLogs(text || '');
 };
 
-const handleScanResponse = (data) => {
-  if (Array.isArray(data)) {
-    scannedNetworks = data;
-    return 'ready';
-  }
-  if (data && data.status === 'ready') {
-    scannedNetworks = Array.isArray(data.networks) ? data.networks : [];
-    return 'ready';
-  }
-  if (data && data.status === 'scanning') return 'scanning';
-  return 'error';
-};
-
-const pollScan = async (attempt = 0) => {
+const doScan = async () => {
+  setScanLoading(true);
   const r = await request('/api/scan');
   if (!r.ok) {
     setScanLoading(false);
     lastScan.textContent = 'ошибка';
-    notify('Не удалось получить результат сканирования.', 'error');
     return;
   }
-  const data = await r.json();
-  const status = handleScanResponse(data);
-  if (status === 'ready') {
-    sortData();
-    renderScanTable();
-    lastScan.textContent = new Date().toLocaleTimeString();
-    setScanLoading(false);
-    return;
-  }
-  if (status === 'scanning' && attempt < 40) {
-    setTimeout(() => pollScan(attempt + 1), 600);
-    return;
-  }
+  scannedNetworks = await r.json();
+  sortData();
+  renderScanTable();
+  lastScan.textContent = new Date().toLocaleTimeString();
   setScanLoading(false);
-  lastScan.textContent = 'ошибка';
-  notify('Сканирование не завершилось вовремя.', 'error');
-};
-
-const doScan = async () => {
-  setScanLoading(true);
-  const r = await request('/api/scan?refresh=1');
-  if (!r.ok) {
-    setScanLoading(false);
-    lastScan.textContent = 'ошибка';
-    return;
-  }
-  const data = await r.json();
-  const status = handleScanResponse(data);
-  if (status === 'ready') {
-    sortData();
-    renderScanTable();
-    lastScan.textContent = new Date().toLocaleTimeString();
-    setScanLoading(false);
-    return;
-  }
-  pollScan();
 };
 
 scanBtn.onclick = doScan;
+
+const doBleScan = async () => {
+  setBleScanLoading(true);
+  const r = await request('/api/ble/scan');
+  if (!r.ok) {
+    setBleScanLoading(false);
+    bleLastScan.textContent = 'ошибка';
+    return;
+  }
+  bleDevices = await r.json();
+  sortBleData();
+  renderBleTable();
+  bleLastScan.textContent = new Date().toLocaleTimeString();
+  setBleScanLoading(false);
+};
+
+bleScanBtn.onclick = doBleScan;
 document.getElementById('refreshSysinfo').onclick = loadSysinfo;
 document.getElementById('refreshLogs').onclick = loadLogs;
 document.getElementById('rebootBtn').onclick = async () => {
@@ -223,6 +238,18 @@ document.querySelectorAll('#scanTable th[data-sort]').forEach((th) => {
     };
     sortData();
     renderScanTable();
+  };
+});
+
+document.querySelectorAll('#bleTable th[data-sort]').forEach((th) => {
+  th.onclick = () => {
+    const field = th.dataset.sort;
+    bleSortState = {
+      field,
+      dir: bleSortState.field === field && bleSortState.dir === 'asc' ? 'desc' : 'asc',
+    };
+    sortBleData();
+    renderBleTable();
   };
 });
 
@@ -258,7 +285,6 @@ document.getElementById('loadApClients').onclick = async () => {
   const bssid = document.getElementById('bssidInput').value.trim();
   const r = await request(`/api/ap-clients?bssid=${encodeURIComponent(bssid)}`);
   if (!r.ok) return;
-
   const data = await r.json();
   const tbody = document.querySelector('#clientsTable tbody');
   tbody.innerHTML = '';

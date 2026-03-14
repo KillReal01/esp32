@@ -91,7 +91,8 @@ LogCapture& LogCapture::instance()
 
 void LogCapture::init()
 {
-    if (s_logInitialized) return;
+    if (s_logInitialized)
+        return;
     s_prevVprintf = esp_log_set_vprintf(logVprintf);
     s_logInitialized = true;
 }

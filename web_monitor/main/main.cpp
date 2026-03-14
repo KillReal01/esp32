@@ -2,6 +2,7 @@
 #include "LittleFs.h"
 #include "LogCapture.h"
 #include "WebServer.h"
+#include "ble/BleScanner.h"
 #include "wifi/AccessPoint.h"
 #include "wifi/WifiScanner.h"
 
@@ -15,14 +16,15 @@ extern "C" void app_main(void)
 {
     AccessPointManager apManager("ESP32-AP", "esp32pass", 1, 8);
     WifiScanner scanner;
+    BleScanner bleScanner;
     AuthService authService("esp32_secure_token");
     DeviceService deviceService(apManager);
-    WebServer webServer(apManager, scanner, deviceService, authService);
-
+    WebServer webServer(apManager, scanner, bleScanner, deviceService, authService);
     LogCapture::instance().init();
 
     ESP_ERROR_CHECK(apManager.initNvs());
     ESP_ERROR_CHECK(mount_littlefs());
+    ESP_ERROR_CHECK(bleScanner.init());
     ESP_ERROR_CHECK(apManager.startSoftAp());
     ESP_ERROR_CHECK(webServer.start() != nullptr ? ESP_OK : ESP_FAIL);
 

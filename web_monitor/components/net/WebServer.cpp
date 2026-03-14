@@ -42,8 +42,18 @@ esp_err_t sendNotFound(httpd_req_t *req, const char *errorCode = "not_found")
 }
 }
 
-WebServer::WebServer(AccessPointManager& apManager, WifiScanner& scanner, DeviceService& deviceService, AuthService& authService)
-    : apManager_(apManager), scanner_(scanner), deviceService_(deviceService), authService_(authService)
+WebServer::WebServer(
+    AccessPointManager& apManager,
+    IScanner& wifiScanner,
+    IScanner& bleScanner,
+    DeviceService& deviceService,
+    AuthService& authService
+):
+    apManager_(apManager),
+    wifiScanner_(wifiScanner),
+    bleScanner_(bleScanner),
+    deviceService_(deviceService),
+    authService_(authService)
 {
 }
 
@@ -93,11 +103,18 @@ std::string WebServer::getBody(httpd_req_t *req)
     }
 
     std::string body(req->content_len, '\0');
-    int received = httpd_req_recv(req, body.data(), body.size());
-    if (received <= 0) {
+    size_t total = 0;
+    while (total < body.size()) {
+        const int received = httpd_req_recv(req, body.data() + total, body.size() - total);
+        if (received > 0) {
+            total += static_cast<size_t>(received);
+            continue;
+        }
+        if (received == HTTPD_SOCK_ERR_TIMEOUT) {
+            continue;
+        }
         return {};
     }
-    body.resize(received);
     return body;
 }
 
@@ -135,7 +152,8 @@ esp_err_t WebServer::jsGetHandler(httpd_req_t *req) { return serveFile(req, "/da
 esp_err_t WebServer::iconGetHandler(httpd_req_t *req) { return serveFile(req, "/data/favicon.png", "image/x-icon"); }
 esp_err_t WebServer::iconPngGetHandler(httpd_req_t *req) { return serveFile(req, "/data/favicon.png", "image/png"); }
 
-esp_err_t WebServer::scanGetHandler(httpd_req_t *req) { return fromReq(req)->handleScan(req); }
+esp_err_t WebServer::scanGetHandler(httpd_req_t *req) { return fromReq(req)->handleWiFiScan(req); }
+esp_err_t WebServer::bleScanGetHandler(httpd_req_t *req) { return fromReq(req)->handleBleScan(req); }
 esp_err_t WebServer::stationsGetHandler(httpd_req_t *req) { return fromReq(req)->handleStations(req); }
 esp_err_t WebServer::logsGetHandler(httpd_req_t *req) { return fromReq(req)->handleLogs(req); }
 esp_err_t WebServer::rebootPostHandler(httpd_req_t *req) { return fromReq(req)->handleReboot(req); }
@@ -144,14 +162,34 @@ esp_err_t WebServer::connectPostHandler(httpd_req_t *req) { return fromReq(req)-
 esp_err_t WebServer::validateTokenPostHandler(httpd_req_t *req) { return fromReq(req)->handleValidateToken(req); }
 esp_err_t WebServer::apClientsGetHandler(httpd_req_t *req) { return fromReq(req)->handleApClients(req); }
 
-esp_err_t WebServer::handleScan(httpd_req_t *req)
+esp_err_t WebServer::handleWiFiScan(httpd_req_t *req)
 {
     if (!ensureAuthorized(req))
         return ESP_OK;
-    const auto networks = scanner_.scanNetworks();
-    const auto payload = scanner_.toJson(networks);
+    if (!wifiScanner_.start(0)) {
+        return sendError(req, "500 Internal Server Error", "wifi_scan_failed");
+    }
+    std::string payload;
+    if (!wifiScanner_.getResult(payload)) {
+        return sendError(req, "500 Internal Server Error", "wifi_scan_failed");
+    }
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, payload.c_str(), payload.size());
+}
+
+esp_err_t WebServer::handleBleScan(httpd_req_t *req)
+{
+    if (!ensureAuthorized(req))
+        return ESP_OK;
+    if (!bleScanner_.start(5)) {
+        return sendError(req, "500 Internal Server Error", "ble_scan_failed");
+    }
+    std::string json;
+    if (!bleScanner_.getResult(json)) {
+        return sendError(req, "500 Internal Server Error", "ble_scan_failed");
+    }
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, json.c_str(), json.size());
 }
 
 esp_err_t WebServer::handleStations(httpd_req_t *req)
@@ -221,14 +259,7 @@ esp_err_t WebServer::handleConnect(httpd_req_t *req)
     const esp_err_t err = apManager_.connectToExternalAp(ssid, pass);
     cJSON *resp = cJSON_CreateObject();
     cJSON_AddStringToObject(resp, "status", err == ESP_OK ? "connecting" : "error");
-    const std::string payload = [&]() {
-        char *rendered = cJSON_PrintUnformatted(resp);
-        if (!rendered)
-            return std::string("{}");
-        std::string out(rendered);
-        cJSON_free(rendered);
-        return out;
-    }();
+    const std::string payload = cjsonToString(resp);
     cJSON_Delete(resp);
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, payload.c_str(), payload.size());
@@ -284,6 +315,7 @@ void WebServer::registerUris(httpd_handle_t server)
     registerUri(server, "/favicon.ico", HTTP_GET, iconGetHandler);
     registerUri(server, "/favicon.png", HTTP_GET, iconPngGetHandler);
     registerUri(server, "/api/scan", HTTP_GET, scanGetHandler);
+    registerUri(server, "/api/ble/scan", HTTP_GET, bleScanGetHandler);
     registerUri(server, "/api/stations", HTTP_GET, stationsGetHandler);
     registerUri(server, "/api/logs", HTTP_GET, logsGetHandler);
     registerUri(server, "/api/reboot", HTTP_POST, rebootPostHandler);
@@ -292,6 +324,7 @@ void WebServer::registerUris(httpd_handle_t server)
     registerUri(server, "/api/token/validate", HTTP_POST, validateTokenPostHandler);
     registerUri(server, "/api/ap-clients", HTTP_GET, apClientsGetHandler);
 }
+
 
 httpd_handle_t WebServer::start()
 {

@@ -66,6 +66,26 @@
       </table>
     </section>
 
+    <section id="ble-scan" class="card panel">
+      <div class="controls">
+        <button id="bleScanBtn" class="small">Сканировать BLE</button>
+        <span class="muted">Последнее сканирование: <strong id="bleLastScan">—</strong></span>
+        <span id="bleScanSpinner" class="spinner" aria-hidden="true"></span>
+      </div>
+      <table id="bleTable">
+        <thead>
+          <tr>
+            <th data-sort="name">Имя</th>
+            <th data-sort="addr">Адрес</th>
+            <th data-sort="rssi">RSSI</th>
+            <th data-sort="type">Тип</th>
+            <th data-sort="scanRsp">ScanRsp</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
     <section class="card">
       <h3>Клиенты точки доступа</h3>
       <div class="controls">

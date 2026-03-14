@@ -5,12 +5,18 @@
 
 #include "Handlers.h"
 #include "esp_http_server.h"
+#include "scan/IScanner.h"
 #include "wifi/AccessPoint.h"
-#include "wifi/WifiScanner.h"
 
 class WebServer {
 public:
-    WebServer(AccessPointManager& apManager, WifiScanner& scanner, DeviceService& deviceService, AuthService& authService);
+    WebServer(
+        AccessPointManager& apManager,
+        IScanner& wifiScanner,
+        IScanner& bleScanner,
+        DeviceService& deviceService,
+        AuthService& authService
+    );
     httpd_handle_t start();
 
 private:
@@ -20,6 +26,7 @@ private:
     static esp_err_t iconGetHandler(httpd_req_t *req);
     static esp_err_t iconPngGetHandler(httpd_req_t *req);
     static esp_err_t scanGetHandler(httpd_req_t *req);
+    static esp_err_t bleScanGetHandler(httpd_req_t *req);
     static esp_err_t stationsGetHandler(httpd_req_t *req);
     static esp_err_t logsGetHandler(httpd_req_t *req);
     static esp_err_t rebootPostHandler(httpd_req_t *req);
@@ -28,7 +35,8 @@ private:
     static esp_err_t validateTokenPostHandler(httpd_req_t *req);
     static esp_err_t apClientsGetHandler(httpd_req_t *req);
 
-    esp_err_t handleScan(httpd_req_t *req);
+    esp_err_t handleWiFiScan(httpd_req_t *req);
+    esp_err_t handleBleScan(httpd_req_t *req);
     esp_err_t handleStations(httpd_req_t *req);
     esp_err_t handleLogs(httpd_req_t *req);
     esp_err_t handleReboot(httpd_req_t *req);
@@ -48,7 +56,8 @@ private:
     void registerUri(httpd_handle_t server, const char *uri, httpd_method_t method, esp_err_t (*handler)(httpd_req_t *));
 
     AccessPointManager& apManager_;
-    WifiScanner& scanner_;
+    IScanner& wifiScanner_;
+    IScanner& bleScanner_;
     DeviceService& deviceService_;
     AuthService& authService_;
 };

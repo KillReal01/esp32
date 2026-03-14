@@ -94,3 +94,75 @@ std::string WifiScanner::toJson(const std::vector<ScannedNetwork>& networks) con
     cJSON_Delete(arr);
     return out;
 }
+
+bool WifiScanner::start(uint32_t)
+{
+    if (!mutex_) {
+        mutex_ = xSemaphoreCreateMutex();
+    }
+    if (!mutex_) {
+        state_ = ScanState::Error;
+        return false;
+    }
+    if (xSemaphoreTake(mutex_, portMAX_DELAY) != pdTRUE) {
+        state_ = ScanState::Error;
+        return false;
+    }
+    state_ = ScanState::Scanning;
+    xSemaphoreGive(mutex_);
+
+    const auto networks = scanNetworks();
+    const auto json = toJson(networks);
+
+    if (xSemaphoreTake(mutex_, portMAX_DELAY) != pdTRUE) {
+        state_ = ScanState::Error;
+        return false;
+    }
+    last_json_ = json;
+    state_ = ScanState::Ready;
+    xSemaphoreGive(mutex_);
+    return true;
+}
+
+void WifiScanner::stop()
+{
+    esp_wifi_scan_stop();
+    if (!mutex_) {
+        state_ = ScanState::Idle;
+        return;
+    }
+    if (xSemaphoreTake(mutex_, portMAX_DELAY) != pdTRUE) {
+        return;
+    }
+    state_ = ScanState::Idle;
+    xSemaphoreGive(mutex_);
+}
+
+ScanState WifiScanner::state() const
+{
+    if (!mutex_) {
+        return state_;
+    }
+    if (xSemaphoreTake(mutex_, portMAX_DELAY) != pdTRUE) {
+        return ScanState::Error;
+    }
+    const ScanState st = state_;
+    xSemaphoreGive(mutex_);
+    return st;
+}
+
+bool WifiScanner::getResult(std::string& out) const
+{
+    if (!mutex_) {
+        out = last_json_;
+        return state_ != ScanState::Error;
+    }
+    if (xSemaphoreTake(mutex_, portMAX_DELAY) != pdTRUE) {
+        out = "[]";
+        return false;
+    }
+    out = last_json_;
+    const ScanState st = state_;
+    xSemaphoreGive(mutex_);
+    return st != ScanState::Error;
+}

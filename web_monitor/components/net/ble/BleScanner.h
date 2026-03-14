@@ -5,6 +5,8 @@
 #include <vector>
 
 #include "esp_err.h"
+#include "esp_gap_ble_api.h"
+#include "scan/IScanner.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
@@ -16,26 +18,27 @@ struct BleDevice {
     bool scanResponse;
 };
 
-class BleScanner {
+class BleScanner final: public IScanner {
 public:
-    enum class State : uint8_t { Idle, Scanning, Ready, Error };
-
     BleScanner();
-    bool init();
-    void startScanAsync(uint32_t durationSeconds);
-    State getState(std::string *json) const;
+    esp_err_t init();
+    ScanState getState(std::string *json) const;
+    bool start(uint32_t durationSeconds) override;
+    void stop() override;
+    ScanState state() const override;
+    bool getResult(std::string& out) const override;
 
 private:
     static void gapCallback(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param);
     void handleGapEvent(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param);
     void updateDevice(const BleDevice& device);
     void finishScan();
-    void setState(State state);
+    void setState(ScanState state);
     std::string devicesToJson() const;
 
-    static BleScanner *instance_;
     mutable SemaphoreHandle_t mutex_{};
-    State state_{State::Idle};
+    SemaphoreHandle_t done_sem_{};
+    ScanState state_{ScanState::Idle};
     std::vector<BleDevice> devices_;
     std::string last_json_{"[]"};
     bool initialized_{false};
