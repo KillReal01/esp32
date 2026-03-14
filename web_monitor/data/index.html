@@ -14,6 +14,8 @@
       <div class="status-chip">AP: ESP32-AP</div>
     </header>
 
+    <div id="notice" class="notice muted" role="status"></div>
+
     <section class="auth card">
       <label for="authToken">Токен авторизации</label>
       <div class="auth-row">
@@ -24,10 +26,29 @@
       <p id="authHint" class="muted">Токен обязателен для API-запросов.</p>
     </section>
 
+    <section class="card" id="sysinfo">
+      <div class="controls">
+        <h3>Системная информация</h3>
+        <span class="muted" id="sysUpdated">—</span>
+      </div>
+      <div class="sysinfo-grid">
+        <div><span class="muted">Firmware</span><strong id="sysFirmware">—</strong></div>
+        <div><span class="muted">Uptime</span><strong id="sysUptime">—</strong></div>
+        <div><span class="muted">Free heap</span><strong id="sysHeap">—</strong></div>
+        <div><span class="muted">Flash</span><strong id="sysFlash">—</strong></div>
+        <div><span class="muted">Health</span><strong id="sysHealth">—</strong></div>
+      </div>
+      <div class="controls">
+        <button id="refreshSysinfo" class="small">Обновить</button>
+        <button id="rebootBtn" class="small danger">Перезагрузить</button>
+      </div>
+    </section>
+
     <section id="scan" class="card panel">
       <div class="controls">
         <button id="scanBtn" class="small">Сканировать сети</button>
         <span class="muted">Последнее сканирование: <strong id="lastScan">—</strong></span>
+        <span id="scanSpinner" class="spinner" aria-hidden="true"></span>
       </div>
       <table id="scanTable">
         <thead>
@@ -55,6 +76,14 @@
         <thead><tr><th>MAC</th><th>AID</th></tr></thead>
         <tbody></tbody>
       </table>
+    </section>
+
+    <section class="card">
+      <div class="controls">
+        <h3>Логи</h3>
+        <button id="refreshLogs" class="small">Обновить</button>
+      </div>
+      <pre id="logsOutput" class="logbox">—</pre>
     </section>
   </div>
   <script src="script.js"></script>

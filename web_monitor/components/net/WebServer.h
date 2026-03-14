@@ -18,6 +18,7 @@ private:
     static esp_err_t cssGetHandler(httpd_req_t *req);
     static esp_err_t jsGetHandler(httpd_req_t *req);
     static esp_err_t iconGetHandler(httpd_req_t *req);
+    static esp_err_t iconPngGetHandler(httpd_req_t *req);
     static esp_err_t scanGetHandler(httpd_req_t *req);
     static esp_err_t stationsGetHandler(httpd_req_t *req);
     static esp_err_t logsGetHandler(httpd_req_t *req);

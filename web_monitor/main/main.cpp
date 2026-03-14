@@ -1,5 +1,6 @@
 #include "Handlers.h"
 #include "LittleFs.h"
+#include "LogCapture.h"
 #include "WebServer.h"
 #include "wifi/AccessPoint.h"
 #include "wifi/WifiScanner.h"
@@ -17,6 +18,8 @@ extern "C" void app_main(void)
     AuthService authService("esp32_secure_token");
     DeviceService deviceService(apManager);
     WebServer webServer(apManager, scanner, deviceService, authService);
+
+    LogCapture::instance().init();
 
     ESP_ERROR_CHECK(apManager.initNvs());
     ESP_ERROR_CHECK(mount_littlefs());

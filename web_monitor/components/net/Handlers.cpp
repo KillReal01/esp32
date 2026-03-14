@@ -1,5 +1,6 @@
 #include "Handlers.h"
 
+#include "LogCapture.h"
 #include "cJSON.h"
 #include "esp_flash.h"
 #include "esp_heap_caps.h"
@@ -9,7 +10,6 @@
 
 namespace {
 constexpr const char *TAG = "DeviceService";
-
 std::string extractBearerToken(std::string_view authHeader)
 {
     constexpr std::string_view kPrefix = "Bearer ";
@@ -117,9 +117,7 @@ std::string DeviceService::getClientsJson() const
 
 std::string DeviceService::getLogs() const
 {
-    return "2026-03-09 10:00:00 System started\n"
-           "2026-03-09 10:00:04 SoftAP active\n"
-           "2026-03-09 10:00:08 Business rule: health monitored\n";
+    return LogCapture::instance().getSnapshot();
 }
 
 std::string DeviceService::getStationsForApJson(std::string_view bssid) const

@@ -5,10 +5,29 @@
 .hero{display:flex;justify-content:space-between;align-items:center}
 .status-chip{padding:7px 12px;border-radius:999px;border:1px solid var(--accent);color:#cbe2ff}
 .auth-row,.controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.controls h3{margin:0}
 input{background:#10192c;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px 10px;min-width:220px}
 .small{background:var(--btn);color:var(--text);border:1px solid var(--line);padding:8px 10px;border-radius:8px;cursor:pointer}
 .small:hover{filter:brightness(1.12)}
+.small.loading{opacity:.7;cursor:default;pointer-events:none}
 .muted{color:var(--muted)}
+.danger{background:#4a1c2a;border-color:#7a2b43}
+.danger:hover{filter:brightness(1.2)}
+.notice{min-height:18px;padding:8px 12px;border-radius:10px;border:1px solid var(--line);background:#0f162a}
+.notice.show{border-color:#4f7ed6;color:#cfe2ff}
+.notice.error{border-color:#b24a4a;color:#ffd7d7}
+.notice.ok{border-color:#3e8a63;color:#d2ffe8}
+.sysinfo-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin:10px 0}
+.sysinfo-grid strong{display:block;font-size:1.05rem;margin-top:4px}
+.logbox{min-height:160px;max-height:320px;overflow:auto;background:#0b1326;border:1px solid var(--line);border-radius:10px;padding:10px;color:#e7f0ff;white-space:pre-wrap;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace}
+.log-line{display:block}
+.log-info{color:#b9d7ff}
+.log-warn{color:#ffd37a}
+.log-error{color:#ff9f9f}
+.log-debug{color:#a7f3c6}
+.spinner{width:12px;height:12px;border:2px solid #3e517a;border-top-color:transparent;border-radius:999px;display:inline-block;vertical-align:middle;animation:spin .9s linear infinite;visibility:hidden}
+.spinner.active{visibility:visible}
+@keyframes spin{to{transform:rotate(360deg)}}
 table{width:100%;border-collapse:collapse}
 th,td{padding:9px;border-bottom:1px solid var(--line);text-align:left}
 th[data-sort]{cursor:pointer;color:#b6cdff}

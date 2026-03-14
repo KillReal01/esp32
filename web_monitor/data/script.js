@@ -1,5 +1,17 @@
 const authTokenInput = document.getElementById('authToken');
 const authHint = document.getElementById('authHint');
+const notice = document.getElementById('notice');
+
+const sysFirmware = document.getElementById('sysFirmware');
+const sysUptime = document.getElementById('sysUptime');
+const sysHeap = document.getElementById('sysHeap');
+const sysFlash = document.getElementById('sysFlash');
+const sysHealth = document.getElementById('sysHealth');
+const sysUpdated = document.getElementById('sysUpdated');
+const logsOutput = document.getElementById('logsOutput');
+const scanBtn = document.getElementById('scanBtn');
+const scanSpinner = document.getElementById('scanSpinner');
+const lastScan = document.getElementById('lastScan');
 
 let scannedNetworks = [];
 let sortState = { field: 'rssi', dir: 'desc' };
@@ -8,6 +20,11 @@ const tokenRegex = /^[A-Za-z0-9_-]{12,64}$/;
 authTokenInput.value = localStorage.getItem('esp32_token') || '';
 
 const setHint = (message) => authHint.textContent = message;
+const notify = (message, type = '') => {
+  notice.textContent = message;
+  const typeClass = type ? ` ${type}` : '';
+  notice.className = `notice${typeClass} show`;
+};
 
 const request = async (path, options = {}) => {
   const token = authTokenInput.value.trim();
@@ -15,7 +32,10 @@ const request = async (path, options = {}) => {
   if (token) headers.Authorization = `Bearer ${token}`;
 
   const response = await fetch(path, { ...options, headers });
-  if (response.status === 401) setHint('Ошибка 401: токен не прошел проверку.');
+  if (response.status === 401) {
+    setHint('Ошибка 401: токен не прошел проверку.');
+    notify('Токен невалиден или отсутствует. Проверьте токен и повторите запрос.', 'error');
+  }
   return response;
 };
 
@@ -70,18 +90,129 @@ const renderScanTable = () => {
   });
 };
 
-const doScan = async () => {
-  document.getElementById('lastScan').textContent = '...';
-  const r = await request('/api/scan');
-  if (!r.ok) return;
-
-  scannedNetworks = await r.json();
-  sortData();
-  renderScanTable();
-  document.getElementById('lastScan').textContent = new Date().toLocaleTimeString();
+const renderSysinfo = (data) => {
+  sysFirmware.textContent = data.firmware || '—';
+  sysUptime.textContent = data.uptimeSec != null ? `${data.uptimeSec} сек` : '—';
+  sysHeap.textContent = data.freeHeapKb != null ? `${data.freeHeapKb} KB` : '—';
+  sysFlash.textContent = data.flashKb != null ? `${data.flashKb} KB` : '—';
+  sysHealth.textContent = data.healthScore != null ? `${data.healthScore}` : '—';
+  sysUpdated.textContent = new Date().toLocaleTimeString();
 };
 
-document.getElementById('scanBtn').onclick = doScan;
+const setScanLoading = (isLoading) => {
+  scanBtn.disabled = isLoading;
+  scanBtn.classList.toggle('loading', isLoading);
+  scanSpinner.classList.toggle('active', isLoading);
+  lastScan.textContent = isLoading ? 'сканирование…' : lastScan.textContent;
+};
+
+const escapeHtml = (value) =>
+  value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+
+const formatLogs = (text) => {
+  if (!text.trim()) return '—';
+  const lines = text.split('\n');
+  return lines
+    .map((line) => {
+      if (!line) return '';
+      let cls = 'log-info';
+      if (/^E\s/.test(line)) cls = 'log-error';
+      else if (/^W\s/.test(line)) cls = 'log-warn';
+      else if (/^D\s/.test(line)) cls = 'log-debug';
+      return `<span class="log-line ${cls}">${escapeHtml(line)}</span>`;
+    })
+    .join('');
+};
+
+const loadSysinfo = async () => {
+  const r = await request('/api/sysinfo');
+  if (!r.ok) return;
+  const data = await r.json();
+  renderSysinfo(data || {});
+};
+
+const loadLogs = async () => {
+  const r = await request('/api/logs');
+  if (!r.ok) return;
+  const text = await r.text();
+  logsOutput.innerHTML = formatLogs(text || '');
+};
+
+const handleScanResponse = (data) => {
+  if (Array.isArray(data)) {
+    scannedNetworks = data;
+    return 'ready';
+  }
+  if (data && data.status === 'ready') {
+    scannedNetworks = Array.isArray(data.networks) ? data.networks : [];
+    return 'ready';
+  }
+  if (data && data.status === 'scanning') return 'scanning';
+  return 'error';
+};
+
+const pollScan = async (attempt = 0) => {
+  const r = await request('/api/scan');
+  if (!r.ok) {
+    setScanLoading(false);
+    lastScan.textContent = 'ошибка';
+    notify('Не удалось получить результат сканирования.', 'error');
+    return;
+  }
+  const data = await r.json();
+  const status = handleScanResponse(data);
+  if (status === 'ready') {
+    sortData();
+    renderScanTable();
+    lastScan.textContent = new Date().toLocaleTimeString();
+    setScanLoading(false);
+    return;
+  }
+  if (status === 'scanning' && attempt < 40) {
+    setTimeout(() => pollScan(attempt + 1), 600);
+    return;
+  }
+  setScanLoading(false);
+  lastScan.textContent = 'ошибка';
+  notify('Сканирование не завершилось вовремя.', 'error');
+};
+
+const doScan = async () => {
+  setScanLoading(true);
+  const r = await request('/api/scan?refresh=1');
+  if (!r.ok) {
+    setScanLoading(false);
+    lastScan.textContent = 'ошибка';
+    return;
+  }
+  const data = await r.json();
+  const status = handleScanResponse(data);
+  if (status === 'ready') {
+    sortData();
+    renderScanTable();
+    lastScan.textContent = new Date().toLocaleTimeString();
+    setScanLoading(false);
+    return;
+  }
+  pollScan();
+};
+
+scanBtn.onclick = doScan;
+document.getElementById('refreshSysinfo').onclick = loadSysinfo;
+document.getElementById('refreshLogs').onclick = loadLogs;
+document.getElementById('rebootBtn').onclick = async () => {
+  const ok = confirm('Перезагрузить устройство сейчас?');
+  if (!ok) return;
+  const r = await request('/api/reboot', { method: 'POST' });
+  if (!r.ok) return;
+  const data = await r.json();
+  notify(data.status === 'ok' ? 'Устройство перезагружается.' : 'Ошибка при перезагрузке.', data.status === 'ok' ? 'ok' : 'error');
+};
 
 document.querySelectorAll('#scanTable th[data-sort]').forEach((th) => {
   th.onclick = () => {
@@ -114,7 +245,13 @@ document.getElementById('validateToken').onclick = async () => {
   });
 
   const data = await r.json();
-  setHint(data.valid ? 'Токен валиден.' : `Токен отклонен: ${data.reason}`);
+  if (data.valid) {
+    setHint('Токен валиден.');
+    notify('Токен прошел проверку.', 'ok');
+  } else {
+    setHint(`Токен отклонен: ${data.reason}`);
+    notify(`Токен отклонен: ${data.reason}`, 'error');
+  }
 };
 
 document.getElementById('loadApClients').onclick = async () => {
@@ -134,3 +271,6 @@ document.getElementById('loadApClients').onclick = async () => {
     tbody.appendChild(tr);
   });
 };
+
+loadSysinfo();
+loadLogs();

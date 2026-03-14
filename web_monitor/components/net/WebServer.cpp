@@ -10,18 +10,35 @@ namespace {
 constexpr const char *TAG = "WebServer";
 constexpr size_t kMaxBody = 512;
 
-esp_err_t sendBadRequest(httpd_req_t *req, const char *message = "{\"error\":\"bad_request\"}")
+std::string cjsonToString(cJSON *root)
 {
-    httpd_resp_set_status(req, "400 Bad Request");
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_send(req, message, HTTPD_RESP_USE_STRLEN);
+    if (!root) return "{}";
+    char *rendered = cJSON_PrintUnformatted(root);
+    if (!rendered) return "{}";
+    std::string out(rendered);
+    cJSON_free(rendered);
+    return out;
 }
 
-esp_err_t sendNotFound(httpd_req_t *req, const char *message = "{\"error\":\"not_found\"}")
+esp_err_t sendError(httpd_req_t *req, const char *status, const char *errorCode)
 {
-    httpd_resp_set_status(req, "404 Not Found");
+    httpd_resp_set_status(req, status);
     httpd_resp_set_type(req, "application/json");
-    return httpd_resp_send(req, message, HTTPD_RESP_USE_STRLEN);
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "error", errorCode);
+    const std::string payload = cjsonToString(root);
+    cJSON_Delete(root);
+    return httpd_resp_send(req, payload.c_str(), payload.size());
+}
+
+esp_err_t sendBadRequest(httpd_req_t *req, const char *errorCode = "bad_request")
+{
+    return sendError(req, "400 Bad Request", errorCode);
+}
+
+esp_err_t sendNotFound(httpd_req_t *req, const char *errorCode = "not_found")
+{
+    return sendError(req, "404 Not Found", errorCode);
 }
 }
 
@@ -106,9 +123,7 @@ bool WebServer::ensureAuthorized(httpd_req_t *req)
 {
     const std::string authHeader = getHeader(req, "Authorization");
     if (!authService_.isHeaderAuthorized(authHeader)) {
-        httpd_resp_set_status(req, "401 Unauthorized");
-        httpd_resp_set_type(req, "application/json");
-        httpd_resp_send(req, "{\"error\":\"unauthorized\"}", HTTPD_RESP_USE_STRLEN);
+        sendError(req, "401 Unauthorized", "unauthorized");
         return false;
     }
     return true;
@@ -118,6 +133,7 @@ esp_err_t WebServer::rootGetHandler(httpd_req_t *req) { return serveFile(req, "/
 esp_err_t WebServer::cssGetHandler(httpd_req_t *req) { return serveFile(req, "/data/style.css", "text/css"); }
 esp_err_t WebServer::jsGetHandler(httpd_req_t *req) { return serveFile(req, "/data/script.js", "application/javascript"); }
 esp_err_t WebServer::iconGetHandler(httpd_req_t *req) { return serveFile(req, "/data/favicon.png", "image/x-icon"); }
+esp_err_t WebServer::iconPngGetHandler(httpd_req_t *req) { return serveFile(req, "/data/favicon.png", "image/png"); }
 
 esp_err_t WebServer::scanGetHandler(httpd_req_t *req) { return fromReq(req)->handleScan(req); }
 esp_err_t WebServer::stationsGetHandler(httpd_req_t *req) { return fromReq(req)->handleStations(req); }
@@ -160,8 +176,12 @@ esp_err_t WebServer::handleReboot(httpd_req_t *req)
 {
     if (!ensureAuthorized(req))
         return ESP_OK;
+    cJSON *resp = cJSON_CreateObject();
+    cJSON_AddStringToObject(resp, "status", "ok");
+    const std::string payload = cjsonToString(resp);
+    cJSON_Delete(resp);
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+    httpd_resp_send(req, payload.c_str(), payload.size());
     deviceService_.reboot();
     return ESP_OK;
 }
@@ -262,6 +282,7 @@ void WebServer::registerUris(httpd_handle_t server)
     registerUri(server, "/style.css", HTTP_GET, cssGetHandler);
     registerUri(server, "/script.js", HTTP_GET, jsGetHandler);
     registerUri(server, "/favicon.ico", HTTP_GET, iconGetHandler);
+    registerUri(server, "/favicon.png", HTTP_GET, iconPngGetHandler);
     registerUri(server, "/api/scan", HTTP_GET, scanGetHandler);
     registerUri(server, "/api/stations", HTTP_GET, stationsGetHandler);
     registerUri(server, "/api/logs", HTTP_GET, logsGetHandler);
