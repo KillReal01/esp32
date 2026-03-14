@@ -4,5 +4,5 @@ idf_component_register(
          "WebServer.cpp"
          "Handlers.cpp"
     INCLUDE_DIRS "."
-    REQUIRES nvs_flash esp_wifi esp_event esp_netif esp_http_server esp_timer spi_flash lwip log
+    REQUIRES nvs_flash esp_wifi esp_event esp_netif esp_http_server esp_timer spi_flash lwip log cjson
 )

@@ -4,6 +4,7 @@
 #include <cstring>
 #include <utility>
 
+#include "cJSON.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
 
@@ -33,16 +34,13 @@ std::string authToString(wifi_auth_mode_t mode)
     }
 }
 
-std::string escapeJson(const std::string& input)
+std::string cjsonToString(cJSON *root)
 {
-    std::string out;
-    out.reserve(input.size() + 8);
-    for (char c : input) {
-        if (c == '"' || c == '\\') {
-            out.push_back('\\');
-        }
-        out.push_back(c);
-    }
+    if (!root) return "{}";
+    char *rendered = cJSON_PrintUnformatted(root);
+    if (!rendered) return "{}";
+    std::string out(rendered);
+    cJSON_free(rendered);
     return out;
 }
 } // namespace
@@ -81,22 +79,18 @@ std::vector<ScannedNetwork> WifiScanner::scanNetworks() const
 
 std::string WifiScanner::toJson(const std::vector<ScannedNetwork>& networks) const
 {
-    std::string json;
-    json.reserve(networks.size() * 88);
-    json += "[";
-
-    for (size_t i = 0; i < networks.size(); ++i) {
-        const auto& n = networks[i];
-        json += "{\"ssid\":\"" + escapeJson(n.ssid) + "\"";
-        json += ",\"bssid\":\"" + n.bssid + "\"";
-        json += ",\"rssi\":" + std::to_string(n.rssi);
-        json += ",\"chan\":" + std::to_string(n.channel);
-        json += ",\"auth\":\"" + n.auth + "\"";
-        json += ",\"hidden\":" + std::string(n.hidden ? "true" : "false");
-        json += "}";
-        if (i + 1 < networks.size()) json += ",";
+    cJSON *arr = cJSON_CreateArray();
+    for (const auto& n : networks) {
+        cJSON *item = cJSON_CreateObject();
+        cJSON_AddStringToObject(item, "ssid", n.ssid.c_str());
+        cJSON_AddStringToObject(item, "bssid", n.bssid.c_str());
+        cJSON_AddNumberToObject(item, "rssi", static_cast<double>(n.rssi));
+        cJSON_AddNumberToObject(item, "chan", static_cast<double>(n.channel));
+        cJSON_AddStringToObject(item, "auth", n.auth.c_str());
+        cJSON_AddBoolToObject(item, "hidden", n.hidden);
+        cJSON_AddItemToArray(arr, item);
     }
-
-    json += "]";
-    return json;
+    const std::string out = cjsonToString(arr);
+    cJSON_Delete(arr);
+    return out;
 }

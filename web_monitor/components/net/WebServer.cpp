@@ -2,6 +2,7 @@
 
 #include <cstdio>
 
+#include "cJSON.h"
 #include "esp_log.h"
 #include "lwip/inet.h"
 
@@ -56,7 +57,8 @@ esp_err_t WebServer::serveFile(httpd_req_t *req, const char *filepath, const cha
 std::string WebServer::getHeader(httpd_req_t *req, const char* name)
 {
     const size_t len = httpd_req_get_hdr_value_len(req, name);
-    if (len == 0) return {};
+    if (len == 0)
+        return {};
 
     std::string value(len + 1, '\0');
     if (httpd_req_get_hdr_value_str(req, name, value.data(), value.size()) != ESP_OK) {
@@ -85,7 +87,8 @@ std::string WebServer::getBody(httpd_req_t *req)
 std::string WebServer::getQueryParam(httpd_req_t *req, const char* key)
 {
     const size_t queryLen = httpd_req_get_url_query_len(req);
-    if (queryLen == 0) return {};
+    if (queryLen == 0)
+        return {};
 
     std::string query(queryLen + 1, '\0');
     if (httpd_req_get_url_query_str(req, query.data(), query.size()) != ESP_OK) {
@@ -127,7 +130,8 @@ esp_err_t WebServer::apClientsGetHandler(httpd_req_t *req) { return fromReq(req)
 
 esp_err_t WebServer::handleScan(httpd_req_t *req)
 {
-    if (!ensureAuthorized(req)) return ESP_OK;
+    if (!ensureAuthorized(req))
+        return ESP_OK;
     const auto networks = scanner_.scanNetworks();
     const auto payload = scanner_.toJson(networks);
     httpd_resp_set_type(req, "application/json");
@@ -136,7 +140,8 @@ esp_err_t WebServer::handleScan(httpd_req_t *req)
 
 esp_err_t WebServer::handleStations(httpd_req_t *req)
 {
-    if (!ensureAuthorized(req)) return ESP_OK;
+    if (!ensureAuthorized(req))
+        return ESP_OK;
     const auto payload = deviceService_.getClientsJson();
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, payload.c_str(), payload.size());
@@ -144,7 +149,8 @@ esp_err_t WebServer::handleStations(httpd_req_t *req)
 
 esp_err_t WebServer::handleLogs(httpd_req_t *req)
 {
-    if (!ensureAuthorized(req)) return ESP_OK;
+    if (!ensureAuthorized(req))
+        return ESP_OK;
     const auto payload = deviceService_.getLogs();
     httpd_resp_set_type(req, "text/plain");
     return httpd_resp_send(req, payload.c_str(), payload.size());
@@ -152,7 +158,8 @@ esp_err_t WebServer::handleLogs(httpd_req_t *req)
 
 esp_err_t WebServer::handleReboot(httpd_req_t *req)
 {
-    if (!ensureAuthorized(req)) return ESP_OK;
+    if (!ensureAuthorized(req))
+        return ESP_OK;
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
     deviceService_.reboot();
@@ -161,7 +168,8 @@ esp_err_t WebServer::handleReboot(httpd_req_t *req)
 
 esp_err_t WebServer::handleSysinfo(httpd_req_t *req)
 {
-    if (!ensureAuthorized(req)) return ESP_OK;
+    if (!ensureAuthorized(req))
+        return ESP_OK;
     const auto payload = deviceService_.getSysinfoJson();
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, payload.c_str(), payload.size());
@@ -169,43 +177,59 @@ esp_err_t WebServer::handleSysinfo(httpd_req_t *req)
 
 esp_err_t WebServer::handleConnect(httpd_req_t *req)
 {
-    if (!ensureAuthorized(req)) return ESP_OK;
+    if (!ensureAuthorized(req))
+        return ESP_OK;
+
     const std::string body = getBody(req);
+    if (body.empty())
+        return sendBadRequest(req);
 
-    const auto sPos = body.find("\"ssid\":\"");
-    const auto pPos = body.find("\"password\":\"");
-    if (sPos == std::string::npos || pPos == std::string::npos) {
+    cJSON *root = cJSON_Parse(body.c_str());
+    if (!root) return sendBadRequest(req);
+
+    const cJSON *ssidItem = cJSON_GetObjectItemCaseSensitive(root, "ssid");
+    const cJSON *passItem = cJSON_GetObjectItemCaseSensitive(root, "password");
+    if (!cJSON_IsString(ssidItem) || !cJSON_IsString(passItem)) {
+        cJSON_Delete(root);
         return sendBadRequest(req);
     }
 
-    const auto ssidStart = sPos + 8;
-    const auto ssidEnd = body.find('"', ssidStart);
-    const auto passStart = pPos + 12;
-    const auto passEnd = body.find('"', passStart);
-    if (ssidEnd == std::string::npos || passEnd == std::string::npos || ssidEnd < ssidStart || passEnd < passStart) {
-        return sendBadRequest(req);
-    }
-    const std::string ssid = body.substr(ssidStart, ssidEnd - ssidStart);
-    const std::string pass = body.substr(passStart, passEnd - passStart);
+    const std::string ssid = ssidItem->valuestring ? ssidItem->valuestring : "";
+    const std::string pass = passItem->valuestring ? passItem->valuestring : "";
+    cJSON_Delete(root);
 
     const esp_err_t err = apManager_.connectToExternalAp(ssid, pass);
+    cJSON *resp = cJSON_CreateObject();
+    cJSON_AddStringToObject(resp, "status", err == ESP_OK ? "connecting" : "error");
+    const std::string payload = [&]() {
+        char *rendered = cJSON_PrintUnformatted(resp);
+        if (!rendered)
+            return std::string("{}");
+        std::string out(rendered);
+        cJSON_free(rendered);
+        return out;
+    }();
+    cJSON_Delete(resp);
     httpd_resp_set_type(req, "application/json");
-    if (err != ESP_OK) {
-        return httpd_resp_send(req, "{\"status\":\"error\"}", HTTPD_RESP_USE_STRLEN);
-    }
-    return httpd_resp_send(req, "{\"status\":\"connecting\"}", HTTPD_RESP_USE_STRLEN);
+    return httpd_resp_send(req, payload.c_str(), payload.size());
 }
 
 esp_err_t WebServer::handleValidateToken(httpd_req_t *req)
 {
     const std::string body = getBody(req);
-    const auto tokenPos = body.find("\"token\":\"");
-    if (tokenPos == std::string::npos) return sendBadRequest(req);
+    if (body.empty())
+        return sendBadRequest(req);
 
-    const auto tokenStart = tokenPos + 9;
-    const auto tokenEnd = body.find('"', tokenStart);
-    if (tokenEnd == std::string::npos || tokenEnd < tokenStart) return sendBadRequest(req);
-    const std::string token = body.substr(tokenStart, tokenEnd - tokenStart);
+    cJSON *root = cJSON_Parse(body.c_str());
+    if (!root)
+        return sendBadRequest(req);
+    const cJSON *tokenItem = cJSON_GetObjectItemCaseSensitive(root, "token");
+    if (!cJSON_IsString(tokenItem)) {
+        cJSON_Delete(root);
+        return sendBadRequest(req);
+    }
+    const std::string token = tokenItem->valuestring ? tokenItem->valuestring : "";
+    cJSON_Delete(root);
 
     const auto payload = authService_.validateTokenResponse(token);
     httpd_resp_set_type(req, "application/json");
@@ -214,7 +238,8 @@ esp_err_t WebServer::handleValidateToken(httpd_req_t *req)
 
 esp_err_t WebServer::handleApClients(httpd_req_t *req)
 {
-    if (!ensureAuthorized(req)) return ESP_OK;
+    if (!ensureAuthorized(req))
+        return ESP_OK;
     const std::string bssid = getQueryParam(req, "bssid");
     const auto payload = deviceService_.getStationsForApJson(bssid);
     httpd_resp_set_type(req, "application/json");
